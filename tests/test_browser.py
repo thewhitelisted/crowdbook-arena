@@ -72,3 +72,37 @@ def test_two_tabs_play_a_live_round(server):
         assert b.is_hidden("#trading")
         browser.close()
     assert errors == []
+
+
+def test_a_challenge_in_the_browser(server):
+    errors = []
+    game = server.new_game("alice")
+    code = game["code"]
+    with playwright.sync_playwright() as p:
+        browser = p.chromium.launch()
+        ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        b = ctx.new_page()
+        b.on("pageerror", lambda e: errors.append(str(e)))
+        b.goto(f"{server.url}/g/{code}")
+        b.fill("#join input[name=name]", "bob")
+        b.click("#join button")
+        b.wait_for_selector("#lobby:not(.hidden)")
+        r = server.post(f"/api/games/{code}/rounds", {"kind": "challenge",
+                                                       "challenge": "conversion",
+                                                       "duration_s": 600}, game["token"])
+        assert r.status_code == 201
+        b.wait_for_selector("#challenge:not(.hidden)")
+        assert b.locator("#challenge-data table tbody tr").count() == 5
+        steps = b.locator(".ans-step")
+        steps.nth(0).select_option("Pearls")
+        steps.nth(1).select_option("Shells")
+        b.click("#challenge-form button")
+        b.wait_for_function("document.getElementById('challenge-saved').textContent"
+                            ".includes('Pearls')")
+        server.post(f"/api/games/{code}/rounds/stop", {}, game["token"])
+        b.wait_for_selector("#results:not(.hidden)")
+        assert "The best answer" in b.text_content("#solution")
+        assert "Pearls" in b.text_content("#results-body")
+        assert b.is_hidden("#challenge")
+        browser.close()
+    assert errors == []

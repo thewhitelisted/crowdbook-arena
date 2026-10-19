@@ -33,8 +33,14 @@
         <label>Round <select id="round-kind">
           <option value="live">Live: everyone trades one market on the clock</option>
           <option value="lockstep">Lockstep: each bot trades its own copy, turn by turn</option>
+          <option value="challenge">Challenge: a one-off decision, scored at the close</option>
         </select></label>
-        <label>Market <select id="market"></select></label>
+        <label class="market-only">Market <select id="market"></select></label>
+        <label class="challenge-only hidden">Challenge <select id="challenge-kind">
+          <option value="auction">Sealed bids</option>
+          <option value="conversion">Round trip</option>
+          <option value="kelly">Stake</option>
+        </select></label>
         <label>Length (s) <input type="number" id="duration" value="300" min="5" step="5"></label>
         <label class="live-only">Speed <input type="number" id="speed" value="1" min="0.1" max="100" step="0.5"></label>
         <label class="lockstep-only hidden">Turn timeout (ms) <input type="number" id="turn-timeout" value="2000" min="50" max="60000" step="100"></label>
@@ -95,6 +101,18 @@
     </div>
   </section>
 
+  <section class="panel hidden" id="challenge">
+    <h2>Challenge <span class="dim" id="challenge-title"></span></h2>
+    <p id="challenge-prompt"></p>
+    <div id="challenge-data"></div>
+    <form id="challenge-form" class="row" style="margin-top:10px"></form>
+    <div class="row"><span class="dim" id="challenge-saved"></span>
+      <span class="dim" id="challenge-clock"></span></div>
+    <div class="error" id="challenge-error"></div>
+    <p class="dim" style="font-size:12px">You can change your answer until the challenge closes.
+      Scores, and the best answer, are shown then: 100 for the best answer, 0 for doing nothing.</p>
+  </section>
+
   <section class="panel hidden" id="lockstep">
     <h2>Lockstep round <span class="dim" id="lockstep-title"></span></h2>
     <p class="dim">Each bot trades its own copy of the same market, and the market waits for it at
@@ -108,7 +126,8 @@
 
   <section class="panel hidden" id="results">
     <h2>Results <span class="dim" id="results-title"></span></h2>
-    <table><thead><tr><th>#</th><th>Player</th><th class="num">Score</th><th class="num">Position</th><th class="num">Fees</th><th class="num">Traded</th></tr></thead>
+    <p id="solution" class="hidden"></p>
+    <table><thead><tr><th>#</th><th>Player</th><th class="num">Score</th><th class="num">Position or answer</th><th class="num">Fees</th><th class="num">Traded</th></tr></thead>
       <tbody id="results-body"></tbody></table>
     <p class="dim" style="font-size:12px">Score: profit after fees in tick-lots, with any
       position left valued at what closing it through the book would bring.</p>

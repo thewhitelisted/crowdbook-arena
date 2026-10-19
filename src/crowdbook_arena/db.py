@@ -135,8 +135,16 @@ class Store:
         return [dict(r) for r in rows]
 
     def finish_round(self, round_id: int, status: str,
-                     scores: dict[int, tuple[float, dict[str, Any]]]) -> None:
+                     scores: dict[int, tuple[float, dict[str, Any]]],
+                     reveal: dict[str, Any] | None = None) -> None:
+        """Stores a round's results; `reveal` is added to its config, such as a challenge's
+        solution, which is kept out of sight until the round ends."""
         with self.engine.begin() as c:
+            if reveal:
+                config = c.execute(select(rounds.c.config).where(
+                    rounds.c.id == round_id)).scalar_one()
+                c.execute(update(rounds).where(rounds.c.id == round_id).values(
+                    config={**config, **reveal}))
             for pid, (score, details) in scores.items():
                 c.execute(results.insert().values(round_id=round_id, player_id=pid,
                                                   score=float(score), details=details))

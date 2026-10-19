@@ -15,6 +15,7 @@ from .auth import new_code, new_token, token_hash
 from .config import Settings
 from .db import Store
 from .live import LiveRound, RequestError
+from .challenges import KINDS as CHALLENGES, AnswerError, ChallengeRound, make as make_challenge
 from .lockstep import LockstepRound
 
 log = logging.getLogger(__name__)
@@ -72,7 +73,7 @@ class GameHub:
         self.game = game
         self.conns: dict[int, set[Connection]] = {}
         self.round: dict[str, Any] | None = None
-        self.runner: LiveRound | LockstepRound | None = None
+        self.runner: LiveRound | LockstepRound | ChallengeRound | None = None
         self.lock = asyncio.Lock()
 
     # Connections
@@ -92,6 +93,8 @@ class GameHub:
             runner.reconnected(player["id"])
             conn.send({"type": "lockstep_progress", "round": self.round["id"],
                        **runner.progress()})
+        elif isinstance(runner, ChallengeRound):
+            conn.send(runner.public(player["id"]))
         await self.broadcast_info()
 
     async def detach(self, player_id: int, conn: Connection) -> None:
@@ -145,19 +148,21 @@ class GameHub:
             if self.round is not None:
                 raise GameError("a round is already under way", 409)
             kind = spec.get("kind", "live")
-            if kind not in ("live", "lockstep"):
+            if kind not in ("live", "lockstep", "challenge"):
                 raise GameError(f"unknown kind of round {kind!r}")
+            seed = spec.get("seed")
+            seed = _int(seed, "seed", 0, 2**31 - 1) if seed is not None else secrets.randbelow(2**31)
+            players = self.arena.store.players(self.game["id"])
+            if kind == "challenge":
+                return await self._start_challenge(spec, seed, players)
             market = spec.get("market", "calm")
             if market not in self.arena.kinds:
                 raise GameError(f"unknown market {market!r}")
             duration = _int(spec.get("duration_s", 300), "duration_s", 5,
                             settings.max_live_duration_s if kind == "live"
                             else settings.max_lockstep_duration_s)
-            seed = spec.get("seed")
-            seed = _int(seed, "seed", 0, 2**31 - 1) if seed is not None else secrets.randbelow(2**31)
             kind_obj: MarketKind = self.arena.kinds[market]
             config: dict[str, Any] = {"duration_s": duration, "market_title": kind_obj.title}
-            players = self.arena.store.players(self.game["id"])
             if kind == "live":
                 speed = spec.get("speed", 1)
                 if (isinstance(speed, bool) or not isinstance(speed, (int, float))
@@ -209,6 +214,32 @@ class GameHub:
         await self.broadcast_info()
         return round_info(rnd)
 
+    async def _start_challenge(self, spec: dict[str, Any], seed: int,
+                               players: list[dict[str, Any]]) -> dict[str, Any]:
+        """Starts a challenge round, for the game's human players; called with the lock
+        held."""
+        which = spec.get("challenge")
+        if which not in CHALLENGES:
+            raise GameError(f"challenge: one of {', '.join(CHALLENGES)}")
+        duration = _int(spec.get("duration_s", 300), "duration_s", 10,
+                        self.arena.settings.max_challenge_duration_s)
+        challenge = make_challenge(which, seed)
+        # Challenges are for people: bots trade, and would only collect zeros here.
+        players = [p for p in players if p["kind"] == "human"]
+        config = {"duration_s": duration, "challenge": which, "title": challenge.title}
+        rnd = self.arena.store.add_round(self.game["id"], "challenge", None, seed, config)
+        runner = ChallengeRound(round_id=rnd["id"], challenge=challenge,
+                                player_ids=[p["id"] for p in players], duration_s=duration,
+                                on_end=lambda scores: self._round_ended(
+                                    rnd, scores, {"solution": challenge.solution()}))
+        self.round, self.runner = rnd, runner
+        await runner.start()
+        await self.broadcast({"type": "round_started", "round": round_info(rnd)})
+        for pid in list(self.conns):
+            await self.send(pid, runner.public(pid))
+        await self.broadcast_info()
+        return round_info(rnd)
+
     async def _watchers(self, msg: dict[str, Any]) -> None:
         runner = self.runner
         for pid in list(self.conns):
@@ -239,8 +270,9 @@ class GameHub:
         await runner.stop()
 
     async def _round_ended(self, rnd: dict[str, Any],
-                           scores: dict[int, tuple[float, dict[str, Any]]]) -> None:
-        self.arena.store.finish_round(rnd["id"], "finished", scores)
+                           scores: dict[int, tuple[float, dict[str, Any]]],
+                           reveal: dict[str, Any] | None = None) -> None:
+        self.arena.store.finish_round(rnd["id"], "finished", scores, reveal)
         self.round = self.runner = None
         await self.broadcast({"type": "round_ended", "round": round_info(
             self.arena.store.round(rnd["id"])), "results": self.results(rnd["id"])})
@@ -256,6 +288,16 @@ class GameHub:
         runner = self.runner
         if runner is None:
             raise RequestError("no round is under way")
+        if isinstance(runner, ChallengeRound):
+            if not isinstance(msg, dict) or msg.get("type") != "challenge_answer":
+                raise RequestError("a challenge round takes challenge_answer messages only")
+            try:
+                saved = runner.answer(player["id"], msg.get("answer"))
+            except AnswerError as e:
+                raise RequestError(str(e)) from None
+            await self.send(player["id"], {"type": "challenge_saved", "round": runner.round_id,
+                                           "answer": saved})
+            return
         if isinstance(runner, LockstepRound):
             if not isinstance(msg, dict) or msg.get("type") != "orders":
                 raise RequestError("a lockstep round takes orders messages only")

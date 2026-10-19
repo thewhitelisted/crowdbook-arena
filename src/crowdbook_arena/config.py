@@ -32,6 +32,7 @@ class Settings:
     feed_interval_ms: int = 100    # market data batched this often to every seat
     lockstep_timeout_ms: int = 2000   # how long a bot has to answer a turn, unless a round says
     max_lockstep_duration_s: int = 7200
+    max_challenge_duration_s: int = 7 * 24 * 3600
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -50,6 +51,8 @@ class Settings:
             lockstep_timeout_ms=_int("ARENA_LOCKSTEP_TIMEOUT_MS", cls.lockstep_timeout_ms),
             max_lockstep_duration_s=_int("ARENA_MAX_LOCKSTEP_DURATION_S",
                                          cls.max_lockstep_duration_s),
+            max_challenge_duration_s=_int("ARENA_MAX_CHALLENGE_DURATION_S",
+                                          cls.max_challenge_duration_s),
         )
 
 
