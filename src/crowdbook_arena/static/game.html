@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crowdbook arena</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1 id="game-name">crowdbook arena</h1>
+  <span>code <span class="code" id="code"></span></span>
+  <button id="copy-link">Copy invite link</button>
+  <span class="dim" id="me"></span>
+  <span class="dim" id="status"></span>
+</header>
+<main>
+  <section class="panel hidden" id="join-panel">
+    <h2>Join this game</h2>
+    <form id="join" class="row">
+      <input name="name" placeholder="Your name" required maxlength="24">
+      <button class="primary">Join</button>
+    </form>
+    <div id="known" class="row"></div>
+    <div class="error" id="join-error"></div>
+  </section>
+
+  <section class="panel hidden" id="lobby">
+    <h2>Players</h2>
+    <ul class="players" id="players"></ul>
+    <div id="host-controls" class="hidden" style="margin-top:12px">
+      <div class="row">
+        <label>Market <select id="market"></select></label>
+        <label>Length (s) <input type="number" id="duration" value="300" min="5" step="5"></label>
+        <label>Speed <input type="number" id="speed" value="1" min="0.1" max="100" step="0.5"></label>
+        <button class="primary" id="start-round">Start a live round</button>
+        <button id="stop-round" class="hidden">End the round now</button>
+      </div>
+      <div class="dim" id="market-description"></div>
+      <div class="error" id="host-error"></div>
+    </div>
+    <p class="dim" id="bot-hint">Bots join with the kit:
+      <code id="bot-command"></code></p>
+  </section>
+
+  <section class="hidden" id="trading">
+    <div class="trade-grid">
+      <div class="panel">
+        <h2>Book <span class="dim" id="round-title"></span></h2>
+        <table class="ladder"><tbody id="ladder"></tbody></table>
+        <p class="dim" style="font-size:12px">Click a bid size to bid there, an offer size to
+          offer there; click your own order (yellow) to cancel it.</p>
+      </div>
+      <div style="display:grid;gap:16px;align-content:start">
+        <div class="panel">
+          <div class="row" style="justify-content:space-between;margin:0">
+            <span id="clock-text" class="num"></span><span class="dim" id="spectating"></span>
+          </div>
+          <div class="clock"><div id="clock-bar"></div></div>
+          <div class="stats" style="margin-top:10px">
+            <div class="stat"><div class="k">Position</div><div class="v" id="position">0</div></div>
+            <div class="stat"><div class="k">P&amp;L</div><div class="v" id="pnl">0</div></div>
+            <div class="stat"><div class="k">Cash</div><div class="v" id="cash">0</div></div>
+            <div class="stat"><div class="k">Fees</div><div class="v" id="fees">0</div></div>
+          </div>
+          <p class="dim" style="font-size:12px;margin:6px 0 0" id="limits"></p>
+        </div>
+        <div class="panel">
+          <h2>Order</h2>
+          <div class="row">
+            <label>Qty <input type="number" id="qty" value="5" min="1"></label>
+            <label>Price <input type="number" id="price"></label>
+          </div>
+          <div class="row">
+            <button class="buy" id="buy-limit">Bid</button>
+            <button class="sell" id="sell-limit">Offer</button>
+            <button class="buy" id="buy-market">Buy market</button>
+            <button class="sell" id="sell-market">Sell market</button>
+            <button id="cancel-all">Cancel all</button>
+          </div>
+          <div class="error" id="order-error"></div>
+          <table><thead><tr><th>Side</th><th class="num">Price</th><th class="num">Open</th><th></th></tr></thead>
+            <tbody id="orders"></tbody></table>
+        </div>
+        <div class="panel">
+          <h2>Trades</h2>
+          <div class="tape"><table><tbody id="tape"></tbody></table></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel hidden" id="results">
+    <h2>Results <span class="dim" id="results-title"></span></h2>
+    <table><thead><tr><th>#</th><th>Player</th><th class="num">Score</th><th class="num">Position</th><th class="num">Fees</th><th class="num">Traded</th></tr></thead>
+      <tbody id="results-body"></tbody></table>
+    <p class="dim" style="font-size:12px">Score: profit after fees in tick-lots, with any
+      position left valued at what closing it through the book would bring.</p>
+  </section>
+
+  <section class="panel hidden" id="history">
+    <h2>Rounds</h2>
+    <table><tbody id="rounds"></tbody></table>
+  </section>
+</main>
+<script type="module" src="/static/game.js"></script>
+</body>
+</html>

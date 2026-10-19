@@ -1,0 +1,45 @@
+# The arena's server, crowdbook-arena, and in kit/ the players' kit, crowdbook-arena-kit: a uv
+# workspace. Everything installs from wheels and pure Python, with nothing to compile.
+#
+#   uv run crowdbook-arena            # the server on http://127.0.0.1:8000
+
+[project]
+name = "crowdbook-arena"
+version = "0.1.0"
+description = "A trading competition on crowdbook markets: games, live rounds, bots and leaderboards"
+readme = "README.md"
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "crowdbook-arena-kit",
+    "crowdbook-engine==0.13.0",
+    "starlette>=0.40",
+    "uvicorn>=0.30",
+    "websockets>=13",
+    "sqlalchemy>=2.0",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2"]
+
+[project.scripts]
+crowdbook-arena = "crowdbook_arena.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "httpx>=0.27"]
+# The browser test: tests/test_browser.py, skipped without it.
+browser = ["playwright==1.56.0"]
+
+[tool.uv.sources]
+crowdbook-arena-kit = { workspace = true }
+
+[tool.uv.workspace]
+members = ["kit"]
+
+[build-system]
+requires = ["uv_build>=0.8,<0.12"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

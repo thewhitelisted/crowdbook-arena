@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crowdbook arena</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="landing">
+  <h1>crowdbook arena</h1>
+  <p class="dim">Trade against your friends in simulated order-book markets, by hand or with
+  Python bots. Start a game and share its code, or join one.</p>
+  <div class="panel">
+    <h2>Start a game</h2>
+    <form id="create">
+      <input name="host_name" placeholder="Your name" required maxlength="24">
+      <input name="name" placeholder="Game name (optional)" maxlength="24">
+      <button class="primary">Start a game</button>
+    </form>
+    <div class="error" id="create-error"></div>
+  </div>
+  <div class="panel">
+    <h2>Join a game</h2>
+    <form id="join">
+      <input name="code" placeholder="Code" required maxlength="12" style="text-transform:uppercase;width:120px">
+      <input name="name" placeholder="Your name" required maxlength="24">
+      <button class="primary">Join</button>
+    </form>
+    <div class="error" id="join-error"></div>
+  </div>
+</div>
+<script type="module">
+import { post, saveToken } from "/static/api.js";
+
+document.getElementById("create").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    const r = await post("/api/games", { host_name: f.get("host_name"), name: f.get("name") || null });
+    saveToken(r.code, r.token, r.player.name);
+    location.href = `/g/${r.code}`;
+  } catch (err) { document.getElementById("create-error").textContent = err.message; }
+});
+
+document.getElementById("join").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const code = f.get("code").trim().toUpperCase();
+  try {
+    const r = await post(`/api/games/${code}/join`, { name: f.get("name"), kind: "human" });
+    saveToken(r.code, r.token, r.player.name);
+    location.href = `/g/${r.code}`;
+  } catch (err) { document.getElementById("join-error").textContent = err.message; }
+});
+</script>
+</body>
+</html>
