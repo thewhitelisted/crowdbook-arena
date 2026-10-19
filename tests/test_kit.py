@@ -47,6 +47,42 @@ def test_state_and_quotes_in_a_stepped_market():
     assert State.from_json(s3.to_json()) == s3
 
 
+def test_quotes_take_whole_numbers_of_any_type_the_same_offline_and_live():
+    import numpy as np
+    q = Quote(bid=(np.int64(100), 2.0), ask=None, take=np.int32(-1)).checked()
+    assert q == Quote((100, 2), None, -1) and type(q.bid[0]) is int
+    for bad in (Quote(bid=(99.5, 1)), Quote(ask=(100, 0)), Quote(take=0.5)):
+        with pytest.raises(ValueError):
+            bad.checked()
+
+    class Halves(Bot):
+        def on_turn(self, state):
+            return Quote(bid=(state.bid[0] - 0.5, 1))
+
+    with pytest.raises(ValueError):
+        run_local(Halves(), "calm", seed=1, duration_s=10)
+
+
+def test_a_refused_order_does_not_block_its_side():
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    async def go():
+        t = _tracker()
+        d = LiveDriver(Bot(), t, send)
+        await d.place(Quote(bid=(98, 3)))
+        assert t.pending
+        # The server refuses it (say the round has just ended): the kit forgets it.
+        t.pending.pop(sent[0]["id"])
+        sent.clear()
+        await d.place(Quote(bid=(98, 3)))
+        assert sent and sent[0]["type"] == "new"
+
+    asyncio.run(go())
+
+
 def test_quote_json_is_checked():
     assert Quote.from_json({"bid": [100, 2], "ask": None, "take": -1}) == Quote((100, 2), None, -1)
     for bad in ({"bid": [100]}, {"bid": [0, 1]}, {"take": 1.5}, {"take": "1"}, {"seat": 1}, []):

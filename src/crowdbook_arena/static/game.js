@@ -169,12 +169,14 @@ $("stop-round").onclick = async () => {
 // The seat, kept from the gateway's messages (crowdbook's docs/protocol.md)
 
 function fromSnapshot(s) {
+  s = s || {};
   return {
-    time: s.time, duration: s.duration, started: s.started, cash: s.cash, position: s.position,
-    fees: s.fees, maxPosition: s.max_position, maxOrder: s.max_order_quantity,
+    time: s.time || 0, duration: s.duration || 0, started: !!s.started, cash: s.cash || 0,
+    position: s.position || 0, fees: s.fees || 0, initialPosition: s.initial_position || 0,
+    maxPosition: s.max_position || 0, maxOrder: s.max_order_quantity || 0,
     orders: new Map((s.orders || []).map((o) => [o.id, o])), bids: s.bids || [], asks: s.asks || [],
     last: s.last_trade, trades: (s.trades || []).slice(-60).reverse(), ended: s.ended,
-    reference: s.reference_price,
+    reference: s.reference_price || 0, initialCash: s.initial_cash || 0,
   };
 }
 
@@ -218,6 +220,7 @@ function apply(s, m) {
       break;
     case "end":
       s.ended = m;
+      s.cash = m.cash - (s.initialCash || 0);
       s.position = m.position;
       s.fees = m.fees / 1000;
       s.orders.clear();
@@ -253,7 +256,7 @@ function fmt(x, digits = 1) {
 function render() {
   const s = seat;
   if (!s) return;
-  const pnl = s.cash + s.position * mark(s) - s.fees;
+  const pnl = s.cash + (s.position - s.initialPosition) * mark(s) - s.fees;
   $("position").textContent = s.position;
   $("pnl").textContent = fmt(pnl);
   $("pnl").className = `v ${pnl > 0 ? "pos" : pnl < 0 ? "neg" : ""}`;

@@ -100,12 +100,14 @@ version = "0.1.0"
 source = { editable = "kit" }
 dependencies = [
     { name = "crowdbook-engine" },
+    { name = "numpy" },
     { name = "websockets" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "crowdbook-engine", specifier = "==0.13.0" },
+    { name = "numpy", specifier = ">=2.0" },
     { name = "websockets", specifier = ">=13" },
 ]
 

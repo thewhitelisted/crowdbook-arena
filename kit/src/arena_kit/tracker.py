@@ -140,6 +140,8 @@ class SeatTracker:
             "max_order_quantity": self.max_order_quantity, "maker_fee": self.maker_fee,
             "taker_fee": self.taker_fee, "cash": self.cash, "position": self.position,
             "fees": self.fees, "traded": self.traded, "orders": list(self.orders.values()),
+            "pending": list(self.pending.values()),
+            "initial_cash": self._initial_cash, "initial_position": self._initial_position,
             "bids": self.bids, "asks": self.asks, "last_trade": self.last_trade,
             "trades": [t.__dict__ for t in self.trades], "ended": self.ended,
         }
@@ -156,7 +158,9 @@ class SeatTracker:
         self.cash, self.position, self.fees = snap["cash"], snap["position"], snap["fees"]
         self.traded = snap.get("traded", 0)
         self.orders = {o["id"]: dict(o) for o in snap["orders"]}
-        self.pending.clear()
+        self.pending = {o["id"]: dict(o) for o in snap.get("pending", [])}
+        self._initial_cash = snap.get("initial_cash", 0)
+        self._initial_position = snap.get("initial_position", 0)
         self.bids = [tuple(x) for x in snap["bids"]]
         self.asks = [tuple(x) for x in snap["asks"]]
         self.last_trade = snap["last_trade"]

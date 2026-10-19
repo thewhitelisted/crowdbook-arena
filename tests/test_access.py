@@ -54,6 +54,34 @@ def test_only_the_host_runs_rounds(server):
     assert server.post(path, {**body, "duration_s": 10**6}, game["token"]).status_code == 400
 
 
+def test_a_long_host_name_still_gets_a_default_game_name(server):
+    game = server.new_game("Bartholomew Smithe")
+    info = server.http.get(f"/api/games/{game['code']}").json()
+    assert info["name"].endswith("'s game") and len(info["name"]) <= 24
+
+
+def test_malformed_messages_do_not_drop_the_connection(server):
+    game = server.new_game("alice")
+
+    async def go():
+        ws = await connect(server, game["token"])
+        await start_round(server, game["code"], game["token"], duration_s=60)
+        await recv_until(ws, is_live("start"))
+        for bad in ({"type": ["new"]}, 5, "ab", [1], {"type": "new", "side": "buy",
+                                                   "order_type": "limit", "price": 99.5,
+                                                   "quantity": 1}):
+            await ws.send(json.dumps(bad))
+            err = await recv_until(ws, lambda m: m["type"] == "error")
+            assert not err["fatal"]
+        await ws.send(json.dumps({"type": "ping"}))
+        await recv_until(ws, lambda m: m["type"] == "pong")
+        await asyncio.to_thread(server.post, f"/api/games/{game['code']}/rounds/stop", {},
+                                game["token"])
+        await recv_until(ws, lambda m: m["type"] == "round_ended")
+        await ws.close()
+    asyncio.run(go())
+
+
 def test_joining_checks_names_and_codes(server):
     game = server.new_game("alice")
     code = game["code"]
@@ -79,6 +107,11 @@ def test_joining_checks_names_and_codes(server):
     {"type": "cancel"},
     {"type": "modify", "id": 1, "price": 3},
     ["new"],
+    {"type": ["new"]},
+    {"type": {"a": 1}},
+    5,
+    "ab",
+    None,
 ])
 def test_requests_are_checked(msg):
     with pytest.raises(RequestError):

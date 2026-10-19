@@ -102,7 +102,8 @@ class GameHub:
             if not conn.send(msg):
                 log.warning("dropping a connection of player %s that fell behind", player_id)
                 self.conns[player_id].discard(conn)
-                await conn.close()
+                # Not awaited: a client that does not read must never hold up a market's relay.
+                asyncio.create_task(conn.close())
 
     async def broadcast(self, msg: dict[str, Any]) -> None:
         for pid in list(self.conns):
@@ -162,11 +163,13 @@ class GameHub:
             self.round, self.live = rnd, live
             try:
                 await live.start()
-            except Exception as e:
+            except BaseException as e:
                 log.exception("round %s did not start", rnd["id"])
                 self.round = self.live = None
                 self.arena.store.finish_round(rnd["id"], "failed", {})
                 await self.broadcast_info()
+                if not isinstance(e, Exception):
+                    raise
                 raise GameError(f"the market did not start: {e}", 500) from e
         await self.broadcast({"type": "round_started", "round": round_info(rnd)})
         for p in players:
@@ -185,7 +188,8 @@ class GameHub:
     async def stop_round(self, host: dict[str, Any]) -> None:
         if not host["is_host"]:
             raise GameError("only the game's host can end a round", 403)
-        live = self.live
+        async with self.lock:  # never while a round is still starting
+            live = self.live
         if live is None:
             raise GameError("no round is under way", 409)
         await live.stop()
@@ -236,7 +240,7 @@ class Arena:
 
     def create_game(self, name: Any, host_name: Any) -> tuple[dict[str, Any], dict[str, Any], str]:
         host_name = check_name(host_name, "your name")
-        name = check_name(name or f"{host_name}'s game", "game name")
+        name = check_name(name or f"{host_name[:17]}'s game", "game name")
         for _ in range(20):
             code = new_code()
             if self.store.game_by_code(code) is None:

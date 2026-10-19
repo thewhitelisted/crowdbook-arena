@@ -72,8 +72,7 @@ class SteppedMarket:
         the next decision."""
         if self.done:
             raise RuntimeError("the market has ended")
-        if quote is None:
-            quote = self._resting()
+        quote = self._resting() if quote is None else quote.checked()
         row = [*(quote.bid or (0, 0)), *(quote.ask or (0, 0)), quote.take, quote.take_price or 0]
         self._obs, _rewards, terminated, truncated, self._info = self._pool.step_orders(
             np.array([row], dtype=np.int64))

@@ -22,6 +22,14 @@ class Quote:
     take: int = 0              # lots to buy now (positive) or sell (negative), immediate-or-cancel
     take_price: int | None = None  # the worst price to take at; the best on the other side if None
 
+    def checked(self) -> "Quote":
+        """The quote with plain whole numbers (NumPy integers and whole floats are converted).
+        Raises ValueError for a price or size that is not a positive whole number, the same
+        offline as in a game."""
+        return Quote(bid=_level(_whole(self.bid)), ask=_level(_whole(self.ask)),
+                     take=_int(_whole(self.take), "take"),
+                     take_price=_opt_int(_whole(self.take_price), "take_price"))
+
     def to_json(self) -> dict[str, Any]:
         return {"bid": list(self.bid) if self.bid else None,
                 "ask": list(self.ask) if self.ask else None,
@@ -38,6 +46,20 @@ class Quote:
         return cls(bid=_level(data.get("bid")), ask=_level(data.get("ask")),
                    take=_int(data.get("take", 0), "take"),
                    take_price=_opt_int(data.get("take_price"), "take_price"))
+
+
+def _whole(value: Any) -> Any:
+    """Whole numbers of any numeric type as int; anything else as it is, for the checks."""
+    if isinstance(value, (list, tuple)):
+        return [_whole(v) for v in value]
+    if isinstance(value, bool) or value is None:
+        return value
+    try:
+        if int(value) == value:
+            return int(value)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return value
 
 
 def _int(value: Any, name: str) -> int:

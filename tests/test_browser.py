@@ -45,6 +45,18 @@ def test_two_tabs_play_a_live_round(server):
         b.click("#buy-market")
         b.wait_for_function("document.getElementById('position').textContent !== '0'")
         assert b.locator("#tape tr").count() > 0
+
+        # Someone who joins mid-round watches the market without a seat.
+        c = ctx.new_page()
+        c.on("pageerror", lambda e: errors.append(str(e)))
+        c.goto(f"{server.url}/g/{code}")
+        c.fill("#join input[name=name]", "carol")
+        c.click("#join button")
+        c.wait_for_selector("#trading:not(.hidden)")
+        c.wait_for_function(
+            "document.querySelectorAll('#ladder td.bidq:not(:empty)').length > 3")
+        assert "watching" in c.text_content("#spectating")
+        assert c.locator("#tape tr").count() > 0
         b.click("#cancel-all")
         b.wait_for_function("document.querySelectorAll('#orders tr').length === 0")
 

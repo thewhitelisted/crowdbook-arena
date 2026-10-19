@@ -44,7 +44,7 @@ class LiveDriver:
         self.fills: list[Fill] = []
         self.cancelling: set[int] = set()
         self.modifying: dict[int, tuple[int, int]] = {}  # modifies sent and not yet answered
-        own = [i for i in tracker.orders if i < ARENA_IDS]
+        own = [i for i in (*tracker.orders, *tracker.pending) if i < ARENA_IDS]
         self.next_id = max(own, default=0) + 1
         self.started = False
 
@@ -75,8 +75,10 @@ class LiveDriver:
         self.trades, self.fills = [], []
         try:
             quote = self.bot.on_turn(state)
+            quote = quote.checked() if quote is not None else None
         except Exception:
-            log.exception("the bot's on_turn raised; its orders are left as they are")
+            log.exception("the bot's on_turn raised or gave a bad quote; its orders are left "
+                          "as they are")
             return
         if quote is not None:
             await self.place(quote)
@@ -169,11 +171,20 @@ async def play(bot: Bot, server: str, token: str, *, rounds: int | None = None,
                 if msg.get("fatal"):
                     raise ConnectionError(msg.get("message"))
                 log.warning("server: %s", msg.get("message"))
+                request = msg.get("request")
+                if tracker and isinstance(request, dict) and "id" in request:
+                    # The server refused it, so the gateway never saw it.
+                    tracker.pending.pop(request["id"], None)
             elif kind == "live_snapshot" and msg.get("seated"):
-                tracker = SeatTracker()
-                tracker.load(msg["state"])
-                driver = LiveDriver(bot, tracker, send)
-                live_round = msg["round"]
+                if driver is not None and tracker is not None and live_round == msg["round"]:
+                    tracker.load(msg["state"])  # the same round again: carry on as we were
+                    driver.cancelling.clear()
+                    driver.modifying.clear()
+                else:
+                    tracker = SeatTracker()
+                    tracker.load(msg["state"])
+                    driver = LiveDriver(bot, tracker, send)
+                    live_round = msg["round"]
             elif kind == "live" and tracker and driver and msg["round"] == live_round:
                 tracker.apply(msg["m"])
                 await driver.on_message(msg["m"])

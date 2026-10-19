@@ -45,7 +45,7 @@ class RequestError(ValueError):
 def check_request(msg: Any) -> dict[str, Any]:
     """A client's order request, checked field by field so that nothing but new, cancel and
     modify, with their own fields, reaches the gateway."""
-    if not isinstance(msg, dict) or msg.get("type") not in _FIELDS:
+    if not isinstance(msg, dict) or not isinstance(msg.get("type"), str) or msg["type"] not in _FIELDS:
         raise RequestError("expected new, cancel, modify or cancel_all")
     kind = msg["type"]
     if set(msg) - _FIELDS[kind]:
@@ -109,6 +109,7 @@ class LiveRound:
         self._watch_feed = watch  # the market's public messages, for players without a seat
         self._on_end = on_end
         self._proc: asyncio.subprocess.Process | None = None
+        self._tokens: Path | None = None
         self._finished = asyncio.Event()
         self._ended = False
         self._stdout_task: asyncio.Task | None = None
@@ -132,8 +133,10 @@ class LiveRound:
         self.dir.mkdir(parents=True, exist_ok=True)
         (self.dir / "scenario.toml").write_text(self.scenario)
         tokens = self.dir / "tokens"
-        tokens.write_text("".join(f"{s.name} {s.token}\n" for s in self.seats.values()))
-        os.chmod(tokens, 0o600)
+        fd = os.open(tokens, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write("".join(f"{s.name} {s.token}\n" for s in self.seats.values()))
+        self._tokens = tokens
         args = [self.crowdbook, "serve", str(self.dir / "scenario.toml"),
                 *[a for s in self.seats.values() for a in ("--seat", s.name)],
                 "--listen", "127.0.0.1:0", "--tokens", str(tokens),
@@ -148,7 +151,8 @@ class LiveRound:
         line = (await asyncio.wait_for(self._proc.stdout.readline(), 10)).decode()
         port = _port(line)
         if port is None:
-            rest = (await self._proc.stdout.read()).decode()
+            self._proc.kill()
+            rest = (await asyncio.wait_for(self._proc.stdout.read(), 5)).decode()
             raise RuntimeError(f"crowdbook serve did not start: {line}{rest}".strip())
         self._stdout_task = asyncio.create_task(self._drain_stdout())
         for seat in self.seats.values():
@@ -207,7 +211,15 @@ class LiveRound:
             t = seat.tracker
             end = t.ended if t else None
             if end is None:
-                scores[seat.player_id] = (0.0, {"ended": False})
+                # The seat's link failed before the end: value it where it was, at the last
+                # trade, so that dropping out never helps.
+                if t is None:
+                    scores[seat.player_id] = (0.0, {"ended": False})
+                    continue
+                mark = t.last_trade or t.reference_price
+                scores[seat.player_id] = (t.cash + t.position * mark - t.fees, {
+                    "ended": False, "position": t.position, "fees": t.fees, "cash": t.cash,
+                    "traded": t.traded})
                 continue
             if end.get("score"):
                 score = end["score"]["total"] / FEE_UNITS
@@ -222,6 +234,8 @@ class LiveRound:
                 await asyncio.wait_for(self._proc.wait(), 10)
             except asyncio.TimeoutError:
                 self._proc.kill()
+        if self._tokens is not None:
+            self._tokens.unlink(missing_ok=True)
         self._finished.set()
         await self._on_end(scores)
 
@@ -232,10 +246,9 @@ class LiveRound:
             raise RequestError("you have no seat in this round")
         if seat.tracker.ended is not None:
             raise RequestError("the round is over")
-        msg = check_request(dict(msg))
+        msg = check_request(msg)
         if msg["type"] == "cancel_all":
-            for oid in seat.tracker.live_ids():
-                await self._write(seat, {"type": "cancel", "id": oid})
+            await self.cancel_all(player_id)
             return
         if msg["type"] == "new" and "id" not in msg:
             msg["id"] = seat.next_id
@@ -247,13 +260,18 @@ class LiveRound:
             raise RequestError("the market is closed") from e
 
     async def cancel_all(self, player_id: int) -> None:
+        """Cancels every order of the seat, paced to stay within the gateway's rate limit."""
         seat = self.seats.get(player_id)
-        if seat and seat.writer and seat.tracker and seat.tracker.ended is None:
-            for oid in seat.tracker.live_ids():
-                try:
-                    await self._write(seat, {"type": "cancel", "id": oid})
-                except ConnectionError:
-                    return
+        if not (seat and seat.writer and seat.tracker and seat.tracker.ended is None):
+            return
+        batch = max(1, self.rate_limit // 2)
+        for i, oid in enumerate(seat.tracker.live_ids()):
+            if i and i % batch == 0:
+                await asyncio.sleep(1)
+            try:
+                await self._write(seat, {"type": "cancel", "id": oid})
+            except (ConnectionError, RuntimeError):
+                return
 
     def snapshot(self, player_id: int) -> dict[str, Any] | None:
         seat = self.seats.get(player_id)
@@ -264,8 +282,8 @@ class LiveRound:
         for seat in self.seats.values():
             if seat.tracker:
                 snap = seat.tracker.snapshot()
-                return {k: snap[k] for k in ("time", "duration", "started", "reference_price",
-                                             "bids", "asks", "last_trade", "trades")}
+                return {**snap, "cash": 0, "position": 0, "fees": 0, "traded": 0, "orders": [],
+                        "pending": [], "initial_cash": 0, "initial_position": 0}
         return None
 
     async def stop(self) -> None:
