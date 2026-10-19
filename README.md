@@ -85,6 +85,10 @@ A bot's score in a lockstep round is exactly the score `arena-kit test` gives it
 same market and seed, and the tests check this. A bot without a connection stands aside, so it
 cannot hold up the round.
 
+Later, perhaps: a shared lockstep market, where every bot trades the same book turn by turn. That
+needs a lockstep gateway mode with several seats in crowdbook itself, which the public engine does
+not have yet.
+
 ## Markets
 
 Public market kinds come from the kit (`arena-kit markets`):
