@@ -21,7 +21,11 @@ class AnswerError(ValueError):
 
 
 def _number(value: Any, name: str, lo: float, hi: float, whole: bool = False) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise AnswerError(f"{name} must be a number")
+    if isinstance(value, int) and abs(value) > 10**15:
+        raise AnswerError(f"{name} must be from {lo:g} to {hi:g}")
+    if not math.isfinite(value):
         raise AnswerError(f"{name} must be a number")
     if whole and value != int(value):
         raise AnswerError(f"{name} must be a whole number")
@@ -285,6 +289,14 @@ class ChallengeRound:
         if self._timer:
             self._timer.cancel()
         await self._close()
+
+    async def abort(self) -> None:
+        """The server is stopping: close without scoring or revealing anything; the round is
+        recorded as failed."""
+        if self._timer:
+            self._timer.cancel()
+        self._closed = True
+        self._finished.set()
 
     async def wait(self) -> None:
         await self._finished.wait()

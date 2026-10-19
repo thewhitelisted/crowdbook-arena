@@ -95,7 +95,8 @@ not have yet.
 
 ## Challenges
 
-A challenge round puts one decision to every player, after IMC Prosperity's manual challenges.
+A challenge round puts one decision to every player in the game, host and bots included, after
+IMC Prosperity's manual challenges.
 Each challenge is drawn from the round's seed and has an exact best answer.
 
 | Challenge | The decision | What it is worth |

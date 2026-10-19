@@ -43,6 +43,10 @@ def test_conversion_paths():
     assert c.value({"path": []}) == c.START
     best = c.best()["path"]
     assert best[-1] == "Shells" and 2 <= len(best) <= 5
+    with pytest.raises(AnswerError):
+        make("auction", 1).check({"bid": 10**400})
+    with pytest.raises(AnswerError):
+        make("kelly", 1).check({"fraction": float("nan")})
     for bad in ({"path": ["Pearls"]}, {"path": ["Shells"]}, {"path": ["Gold", "Shells"]},
                 {"path": ["Pearls", "Pearls", "Shells"]}, {"path": ["Pearls"] * 6},
                 {"path": "Shells"}, {"bid": 1}, None):
@@ -122,3 +126,18 @@ def test_a_challenge_round_end_to_end(server):
     assert sol["answer"] == make("auction", 9).best()
     stored = server.http.get(f"/api/games/{code}/rounds/1").json()
     assert stored["round"]["config"]["solution"] == sol
+
+
+def test_stopping_the_server_fails_an_open_challenge_without_revealing_it(tmp_path):
+    from conftest import Server
+    from crowdbook_arena.db import Store
+
+    s = Server(tmp_path)
+    game = s.new_game("alice")
+    r = s.post(f"/api/games/{game['code']}/rounds", {"kind": "challenge", "challenge": "kelly",
+                                                      "duration_s": 3600}, game["token"])
+    assert r.status_code == 201
+    s.stop()
+    store = Store(f"sqlite:///{tmp_path}/arena.db")
+    rnd = store.rounds(store.game_by_code(game["code"])["id"])[0]
+    assert rnd["status"] == "failed" and "solution" not in rnd["config"]
