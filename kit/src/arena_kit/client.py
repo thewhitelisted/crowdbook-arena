@@ -16,7 +16,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import websockets
 
-from .bot import Bot, Fill, Quote, Trade
+from .bot import Bot, Fill, Quote, State, Trade
 from .tracker import SeatTracker
 
 log = logging.getLogger(__name__)
@@ -188,6 +188,24 @@ async def play(bot: Bot, server: str, token: str, *, rounds: int | None = None,
             elif kind == "live" and tracker and driver and msg["round"] == live_round:
                 tracker.apply(msg["m"])
                 await driver.on_message(msg["m"])
+            elif kind == "turn":
+                # A lockstep round: answer every turn with this turn's quote.
+                if msg["round"] != live_round:
+                    live_round = msg["round"]
+                    s = msg["state"]
+                    try:
+                        bot.on_start({"mode": "lockstep", "round": msg["round"],
+                                      "max_position": s["max_position"],
+                                      "max_order_quantity": s["max_order_quantity"]})
+                    except Exception:
+                        log.exception("the bot's on_start raised")
+                try:
+                    quote = bot.on_turn(State.from_json(msg["state"]))
+                except Exception:
+                    log.exception("the bot's on_turn raised; it answers nothing this turn")
+                    quote = None
+                answer = quote.to_json() if quote is not None else _keep(msg["state"])
+                await send({"type": "orders", "turn": msg["turn"], **answer})
             elif kind == "round_ended":
                 mine = next((r for r in msg["results"] if me and r["player_id"] == me["id"]),
                             None)
@@ -200,6 +218,12 @@ async def play(bot: Bot, server: str, token: str, *, rounds: int | None = None,
                 if rounds is not None and len(done) >= rounds:
                     break
     return done
+
+
+def _keep(state: dict[str, Any]) -> dict[str, Any]:
+    """The answer that leaves the seat's quotes as they are."""
+    return {"bid": state.get("my_bid"), "ask": state.get("my_ask"), "take": 0,
+            "take_price": None}
 
 
 def run(bot: Bot, server: str, token: str, rounds: int | None = None) -> list[dict[str, Any]]:

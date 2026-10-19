@@ -9,9 +9,13 @@ traders who know the true value early or late) give the book its liquidity.
 The server runs the markets. Players run their own bots on their own machines and connect over
 the network, and the server never runs anyone's code.
 
-> **Status:** milestone 1 is done: games with join codes, live rounds traded by hand and by bots,
-> results, and the players' kit. Coming next, in order: lockstep bot rounds, manual challenges,
-> leaderboards across rounds, and the groundwork for hosting.
+> **Status:** done so far:
+> - games with join codes;
+> - live rounds traded by hand and by bots, with results;
+> - lockstep rounds for bots;
+> - the players' kit.
+>
+> Coming next: manual challenges, leaderboards across rounds, and the groundwork for hosting.
 
 ## Run it
 
@@ -29,8 +33,10 @@ Open <http://127.0.0.1:8000>:
 2. Open the game's link in a second tab or another browser and join under another name, or send
    the link to friends on the same network. Start the server with `ARENA_HOST=0.0.0.0` so others
    can reach it.
-3. As host, pick a market, a length and a speed, and start a live round. Every player in the game
-   gets a seat.
+3. As host, pick a round, a market and a length, and start it.
+   - A live round runs on the clock, at the speed you choose, and every player in the game gets
+     a seat in it.
+   - A lockstep round is for the game's bots (see [Bots](#bots)).
 4. Trade from the ladder or the order ticket:
    - Click a bid size to bid at that price, or an offer size to offer at it.
    - Click your own order (in yellow) to cancel it.
@@ -65,6 +71,26 @@ uv run arena-kit join kit/examples/starter_bot.py --server http://127.0.0.1:8000
 
 The same code runs offline and in a game, unchanged.
 
+### Lockstep rounds
+
+In a lockstep round, which is for bots, each bot trades its own copy of the same market, from the
+same seed, as in IMC Prosperity.
+
+At every turn the market waits for the bot. A turn is each simulated second, and whenever one of
+the bot's orders fills. The bot's answer reaches the market at the turn's simulated time, so how
+far away the bot is, or how long it thinks, changes nothing as long as it answers within the
+round's turn timeout. A late answer, or none, leaves its quotes as they were and takes nothing.
+
+A bot's score in a lockstep round is exactly the score `arena-kit test` gives it offline on the
+same market and seed, and the tests check this. All the copies move through the market together, one simulated second at a time. No bot is shown
+a moment of its market until every bot has finished the second before it, so no bot can run ahead
+and tell another what is coming. A bot that disconnects is waited for a few seconds, then stands
+aside at the others' pace until it comes back.
+
+Later, perhaps: a shared lockstep market, where every bot trades the same book turn by turn. That
+needs a lockstep gateway mode with several seats in crowdbook itself, which the public engine does
+not have yet.
+
 ## Markets
 
 Public market kinds come from the kit (`arena-kit markets`):
@@ -94,6 +120,8 @@ All settings come from environment variables:
 | `ARENA_MARKET_KINDS` | all | A comma-separated list of the kinds games may use. |
 | `ARENA_MAX_PLAYERS` | `32` | Players a game may have. |
 | `ARENA_MAX_LIVE_DURATION_S` | `3600` | The longest live round. |
+| `ARENA_MAX_LOCKSTEP_DURATION_S` | `7200` | The longest lockstep round, in simulated seconds. |
+| `ARENA_LOCKSTEP_TIMEOUT_MS` | `2000` | A lockstep turn's timeout, unless the round sets its own. |
 | `ARENA_RATE_LIMIT` | `50` | Messages a seat may send a second. |
 | `ARENA_FEED_INTERVAL_MS` | `100` | How often market data is batched to screens. |
 | `ARENA_CROWDBOOK` | the venv's | The `crowdbook` command that serves live rounds. |
@@ -105,6 +133,8 @@ All settings come from environment variables:
   each seat's gateway messages to its player's screens and bots over a WebSocket. Players' order
   requests are checked field by field before they reach the gateway. A player can only send from
   their own seat, because the seat comes from their token and never from the message.
+- **Lockstep rounds.** Each bot's market is a `crowdbook_learn.Pool` of one market, stepped
+  in-process (`src/crowdbook_arena/lockstep.py`).
 - **Players and tokens.** A player is identified by a random token, given once when they create
   or join a game. The server keeps only its SHA-256 hash.
 - **Storage.** SQLite, through SQLAlchemy Core (`src/crowdbook_arena/db.py`).

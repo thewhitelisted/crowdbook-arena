@@ -86,6 +86,9 @@ function handle(msg) {
     case "round_started":
       $("results").classList.add("hidden");
       break;
+    case "lockstep_progress":
+      showLockstep(msg);
+      break;
     case "live_snapshot":
       roundId = msg.round;
       seated = msg.seated;
@@ -103,6 +106,7 @@ function handle(msg) {
       roundId = null;
       seat = null;
       $("trading").classList.add("hidden");
+      $("lockstep").classList.add("hidden");
       break;
   }
 }
@@ -144,6 +148,27 @@ function setGame(g) {
   }
 }
 
+function showLockstep(p) {
+  if (!game || !game.current || game.current.kind !== "lockstep") return;
+  $("lockstep").classList.remove("hidden");
+  $("lockstep-title").textContent =
+    `round ${game.current.number}: ${game.current.config.market_title || game.current.market}`;
+  $("lockstep-clock").textContent = `${clock(p.time / SEC)} / ${clock(p.duration / SEC)}`;
+  $("lockstep-bar").style.width = `${p.duration ? Math.min(100, (100 * p.time) / p.duration) : 0}%`;
+  const done = new Set(p.done.map(String));
+  const bots = game.players.filter((x) => x.kind === "bot");
+  $("lockstep-body").innerHTML = bots.map((b) =>
+    `<tr><td>${esc(b.name)}</td><td>${done.has(String(b.id)) ? "finished" : "trading"}</td>` +
+    `<td><span class="dot ${b.online ? "on" : ""}"></span></td></tr>`).join("");
+}
+
+function showKindFields() {
+  const lockstep = $("round-kind").value === "lockstep";
+  for (const el of document.querySelectorAll(".live-only")) el.classList.toggle("hidden", lockstep);
+  for (const el of document.querySelectorAll(".lockstep-only")) el.classList.toggle("hidden", !lockstep);
+}
+$("round-kind").onchange = showKindFields;
+
 function describeMarket() {
   const m = game.markets.find((x) => x.name === $("market").value);
   $("market-description").textContent = m ? m.description : "";
@@ -153,10 +178,11 @@ $("market").onchange = describeMarket;
 $("start-round").onclick = async () => {
   $("host-error").textContent = "";
   try {
-    await post(`/api/games/${code}/rounds`, {
-      kind: "live", market: $("market").value,
-      duration_s: parseInt($("duration").value, 10), speed: parseFloat($("speed").value),
-    }, token);
+    const kind = $("round-kind").value;
+    const spec = { kind, market: $("market").value, duration_s: parseInt($("duration").value, 10) };
+    if (kind === "live") spec.speed = parseFloat($("speed").value);
+    else spec.turn_timeout_ms = parseInt($("turn-timeout").value, 10);
+    await post(`/api/games/${code}/rounds`, spec, token);
   } catch (err) { $("host-error").textContent = err.message; }
 };
 

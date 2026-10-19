@@ -15,6 +15,7 @@ from .auth import new_code, new_token, token_hash
 from .config import Settings
 from .db import Store
 from .live import LiveRound, RequestError
+from .lockstep import LockstepRound
 
 log = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ class GameHub:
         self.game = game
         self.conns: dict[int, set[Connection]] = {}
         self.round: dict[str, Any] | None = None
-        self.live: LiveRound | None = None
+        self.runner: LiveRound | LockstepRound | None = None
         self.lock = asyncio.Lock()
 
     # Connections
@@ -82,19 +83,26 @@ class GameHub:
     async def attach(self, player: dict[str, Any], conn: Connection) -> None:
         self.conns.setdefault(player["id"], set()).add(conn)
         conn.send({"type": "welcome", "player": player, "game": self.info()})
-        if self.live and self.round:
-            snap = self.live.snapshot(player["id"])
+        runner = self.runner
+        if isinstance(runner, LiveRound) and self.round:
+            snap = runner.snapshot(player["id"])
             conn.send({"type": "live_snapshot", "round": self.round["id"], "seated": snap is not None,
-                       "state": snap or self.live.any_snapshot()})
+                       "state": snap or runner.any_snapshot()})
+        elif isinstance(runner, LockstepRound) and self.round:
+            runner.reconnected(player["id"])
+            conn.send({"type": "lockstep_progress", "round": self.round["id"],
+                       **runner.progress()})
         await self.broadcast_info()
 
     async def detach(self, player_id: int, conn: Connection) -> None:
         conns = self.conns.get(player_id, set())
         conns.discard(conn)
         await conn.close()
-        if not conns and self.live:
+        if not conns and isinstance(self.runner, LiveRound):
             # No screen or bot left to watch the seat's orders: take them out of the book.
-            await self.live.cancel_all(player_id)
+            await self.runner.cancel_all(player_id)
+        elif not conns and isinstance(self.runner, LockstepRound):
+            self.runner.disconnected(player_id)
         await self.broadcast_info()
 
     async def send(self, player_id: int, msg: dict[str, Any]) -> None:
@@ -132,72 +140,108 @@ class GameHub:
     async def start_round(self, host: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
         if not host["is_host"]:
             raise GameError("only the game's host can start a round", 403)
+        settings = self.arena.settings
         async with self.lock:
             if self.round is not None:
                 raise GameError("a round is already under way", 409)
             kind = spec.get("kind", "live")
-            if kind != "live":
+            if kind not in ("live", "lockstep"):
                 raise GameError(f"unknown kind of round {kind!r}")
             market = spec.get("market", "calm")
             if market not in self.arena.kinds:
                 raise GameError(f"unknown market {market!r}")
             duration = _int(spec.get("duration_s", 300), "duration_s", 5,
-                            self.arena.settings.max_live_duration_s)
-            speed = spec.get("speed", 1)
-            if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0.1 <= speed <= 100:
-                raise GameError("speed: simulated seconds a second, from 0.1 to 100")
+                            settings.max_live_duration_s if kind == "live"
+                            else settings.max_lockstep_duration_s)
+            seed = spec.get("seed")
+            seed = _int(seed, "seed", 0, 2**31 - 1) if seed is not None else secrets.randbelow(2**31)
+            kind_obj: MarketKind = self.arena.kinds[market]
+            config: dict[str, Any] = {"duration_s": duration, "market_title": kind_obj.title}
             players = self.arena.store.players(self.game["id"])
+            if kind == "live":
+                speed = spec.get("speed", 1)
+                if (isinstance(speed, bool) or not isinstance(speed, (int, float))
+                        or not 0.1 <= speed <= 100):
+                    raise GameError("speed: simulated seconds a second, from 0.1 to 100")
+                config["speed"] = speed
+            else:
+                players = [p for p in players if p["kind"] == "bot"]
+                if not players:
+                    raise GameError("a lockstep round is for bots, and this game has none yet")
+                config["turn_timeout_ms"] = _int(spec.get("turn_timeout_ms",
+                                                          settings.lockstep_timeout_ms),
+                                                 "turn_timeout_ms", 50, 60_000)
             if not players:
                 raise GameError("no players")
-            seed = int(spec["seed"]) if isinstance(spec.get("seed"), int) else secrets.randbelow(2**31)
-            kind_obj: MarketKind = self.arena.kinds[market]
-            config = {"duration_s": duration, "speed": speed, "market_title": kind_obj.title}
-            rnd = self.arena.store.add_round(self.game["id"], "live", market, seed, config)
-            live = LiveRound(
-                round_id=rnd["id"], scenario=kind_obj.scenario(seed, duration), seed=seed,
-                duration_s=duration, speed=speed, player_ids=[p["id"] for p in players],
-                crowdbook=self.arena.settings.crowdbook, work_dir=self.arena.settings.work_dir,
-                send=self.send, on_end=lambda scores: self._round_ended(rnd, scores),
-                rate_limit=self.arena.settings.rate_limit,
-                feed_interval_ms=self.arena.settings.feed_interval_ms, watch=self._watchers)
-            self.round, self.live = rnd, live
+            rnd = self.arena.store.add_round(self.game["id"], kind, market, seed, config)
+            scenario = kind_obj.scenario(seed, duration)
+            on_end = lambda scores: self._round_ended(rnd, scores)  # noqa: E731
             try:
-                await live.start()
+                if kind == "live":
+                    runner: LiveRound | LockstepRound = LiveRound(
+                        round_id=rnd["id"], scenario=scenario, seed=seed, duration_s=duration,
+                        speed=config["speed"], player_ids=[p["id"] for p in players],
+                        crowdbook=settings.crowdbook, work_dir=settings.work_dir, send=self.send,
+                        on_end=on_end, rate_limit=settings.rate_limit,
+                        feed_interval_ms=settings.feed_interval_ms, watch=self._watchers)
+                else:
+                    runner = LockstepRound(
+                        round_id=rnd["id"], scenario=scenario, seed=seed,
+                        player_ids=[p["id"] for p in players],
+                        timeout_ms=config["turn_timeout_ms"], send=self.send,
+                        connected=lambda pid: bool(self.conns.get(pid)),
+                        on_progress=self._lockstep_progress, on_end=on_end)
+                self.round, self.runner = rnd, runner
+                await runner.start()
+                await self.broadcast({"type": "round_started", "round": round_info(rnd)})
             except BaseException as e:
                 log.exception("round %s did not start", rnd["id"])
-                self.round = self.live = None
+                self.round = self.runner = None
                 self.arena.store.finish_round(rnd["id"], "failed", {})
                 await self.broadcast_info()
                 if not isinstance(e, Exception):
                     raise
-                raise GameError(f"the market did not start: {e}", 500) from e
-        await self.broadcast({"type": "round_started", "round": round_info(rnd)})
-        for p in players:
-            snap = live.snapshot(p["id"])
-            await self.send(p["id"], {"type": "live_snapshot", "round": rnd["id"],
-                                      "seated": True, "state": snap})
+                raise GameError(f"the round did not start: {e}", 500) from e
+        if isinstance(runner, LiveRound):
+            for p in players:
+                await self.send(p["id"], {"type": "live_snapshot", "round": rnd["id"],
+                                          "seated": True, "state": runner.snapshot(p["id"])})
         await self.broadcast_info()
         return round_info(rnd)
 
     async def _watchers(self, msg: dict[str, Any]) -> None:
-        live = self.live
+        runner = self.runner
         for pid in list(self.conns):
-            if live is not None and pid not in live.seats:
+            if runner is not None and pid not in runner.seats:
                 await self.send(pid, msg)
+
+    async def _lockstep_progress(self, progress: dict[str, Any]) -> None:
+        if self.round:
+            await self.broadcast({"type": "lockstep_progress", "round": self.round["id"],
+                                  **progress})
+
+    async def abort(self) -> None:
+        """The server is stopping: a round under way ends without results, as failed."""
+        runner, rnd = self.runner, self.round
+        if runner is None or rnd is None:
+            return
+        await runner.abort()
+        self.arena.store.finish_round(rnd["id"], "failed", {})
+        self.round = self.runner = None
 
     async def stop_round(self, host: dict[str, Any]) -> None:
         if not host["is_host"]:
             raise GameError("only the game's host can end a round", 403)
         async with self.lock:  # never while a round is still starting
-            live = self.live
-        if live is None:
+            runner = self.runner
+        if runner is None:
             raise GameError("no round is under way", 409)
-        await live.stop()
+        await runner.stop()
 
     async def _round_ended(self, rnd: dict[str, Any],
                            scores: dict[int, tuple[float, dict[str, Any]]]) -> None:
         self.arena.store.finish_round(rnd["id"], "finished", scores)
-        self.round = self.live = None
+        self.round = self.runner = None
         await self.broadcast({"type": "round_ended", "round": round_info(
             self.arena.store.round(rnd["id"])), "results": self.results(rnd["id"])})
         await self.broadcast_info()
@@ -209,9 +253,17 @@ class GameHub:
                 for i, r in enumerate(rows)]
 
     async def request(self, player: dict[str, Any], msg: dict[str, Any]) -> None:
-        if self.live is None:
+        runner = self.runner
+        if runner is None:
             raise RequestError("no round is under way")
-        await self.live.request(player["id"], msg)
+        if isinstance(runner, LockstepRound):
+            if not isinstance(msg, dict) or msg.get("type") != "orders":
+                raise RequestError("a lockstep round takes orders messages only")
+            why = runner.answer(player["id"], msg)
+            if why:
+                raise RequestError(why)
+            return
+        await runner.request(player["id"], msg)
 
 
 def round_info(r: dict[str, Any]) -> dict[str, Any]:
