@@ -12,6 +12,13 @@ services:
     environment:
       ARENA_HOST: 0.0.0.0
       ARENA_PORT: "8000"
+      # Only Caddy reaches the arena, on the compose network: trust the client address and
+      # scheme it passes on.
+      FORWARDED_ALLOW_IPS: "*"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false   # only with --profile postgres
     volumes:
       - arena-data:/data
     expose:
@@ -40,6 +47,11 @@ services:
       POSTGRES_USER: arena
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
       POSTGRES_DB: arena
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arena -d arena"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
     volumes:
       - postgres-data:/var/lib/postgresql/data
 

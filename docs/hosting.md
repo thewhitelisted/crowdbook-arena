@@ -46,7 +46,9 @@ go through Caddy with nothing to configure.
 git pull && docker compose up -d --build
 ```
 
-A round under way when the arena restarts is marked failed. Restart between rounds.
+A round under way when the arena stops is ended without results and marked failed, and a
+challenge still open is closed without revealing anything. Update between rounds, when no
+challenge is open.
 
 ## Postgres instead of SQLite
 
