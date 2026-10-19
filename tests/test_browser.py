@@ -25,6 +25,7 @@ def test_two_tabs_play_a_live_round(server):
         b.fill("#join input[name=name]", "bob")
         b.click("#join button")
         a.wait_for_function("document.querySelectorAll('#players li').length === 2")
+        b.wait_for_function("document.getElementById('me').textContent.includes('bob')")
         assert "you are bob" in b.text_content("#me")
         assert "you are alice (host)" in a.text_content("#me")
         assert b.is_hidden("#host-controls")

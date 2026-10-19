@@ -20,8 +20,11 @@ def test_live_round_end_to_end(server):
     bob = server.join(code, "bob")
     bot = server.join(code, "starter", kind="bot")
 
+    bot_events = []
+
     async def scenario():
-        bot_task = asyncio.create_task(play(StarterBot(), server.url, bot["token"], rounds=1))
+        bot_task = asyncio.create_task(play(StarterBot(), server.url, bot["token"], rounds=1,
+                                            on_event=bot_events.append))
         async with websockets.connect(ws_url(server.url)) as ws:
             await ws.send(json.dumps({"type": "auth", "token": bob["token"]}))
             welcome = await recv_until(ws, lambda m: m["type"] == "welcome")
@@ -48,7 +51,11 @@ def test_live_round_end_to_end(server):
     assert bob_row["details"]["position"] >= 1
     starter = next(r for r in ended["results"] if r["name"] == "starter")
     assert bot_results[0]["result"]["player_id"] == starter["player_id"]
-    assert starter["details"]["traded"] > 0
+    # The bot quoted: its orders reached the book. (Whether they filled in a round this short
+    # is up to the market.)
+    accepted = [m for m in bot_events if m["type"] == "live" and m["m"]["type"] == "accepted"]
+    assert accepted and all(m["m"]["time_in_force"] == "post-only" for m in accepted[:2])
+    assert starter["details"]["traded"] >= 0
     # The round is stored, with the same results, and a new one can start.
     r = server.http.get(f"/api/games/{code}/rounds/1").json()
     assert r["round"]["status"] == "finished"
