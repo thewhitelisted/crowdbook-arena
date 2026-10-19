@@ -104,5 +104,8 @@ def test_a_challenge_in_the_browser(server):
         assert "The best answer" in b.text_content("#solution")
         assert "Pearls" in b.text_content("#results-body")
         assert b.is_hidden("#challenge")
+        b.wait_for_selector("#leaderboard:not(.hidden)")
+        b.click("#board-tabs button[data-board=challenge]")
+        assert "bob" in b.text_content("#board-body")
         browser.close()
     assert errors == []

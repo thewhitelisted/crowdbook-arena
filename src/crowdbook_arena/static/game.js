@@ -94,6 +94,10 @@ function handle(msg) {
     case "challenge":
       showChallenge(msg);
       break;
+    case "leaderboard":
+      boards = msg.boards;
+      showBoards();
+      break;
     case "challenge_saved":
       $("challenge-error").textContent = "";
       $("challenge-saved").textContent = `Saved: ${describeAnswer(msg.answer)}.`;
@@ -180,6 +184,28 @@ function showKindFields() {
   for (const [cls, on] of Object.entries(show)) {
     for (const el of document.querySelectorAll(`.${cls}`)) el.classList.toggle("hidden", !on);
   }
+}
+
+// Leaderboards
+
+let boards = null;
+let board = "overall";
+
+function showBoards() {
+  const any = boards && boards.overall.rows.length > 0;
+  $("leaderboard").classList.toggle("hidden", !any);
+  if (!any) return;
+  $("board-tabs").innerHTML = Object.entries(boards).map(([key, b]) =>
+    `<button data-board="${key}" class="${key === board ? "primary" : ""}">${esc(b.title)}</button>`).join("");
+  for (const btn of $("board-tabs").querySelectorAll("button")) {
+    btn.onclick = () => { board = btn.dataset.board; showBoards(); };
+  }
+  const rows = boards[board].rows;
+  $("board-body").innerHTML = rows.length ? rows.map((r) =>
+    `<tr class="${me && r.player_id === me.id ? "pos" : ""}"><td>${r.rank}</td><td>${esc(r.name)}` +
+    `${r.kind === "bot" ? '<span class="badge">bot</span>' : ""}</td>` +
+    `<td class="num">${r.points.toFixed(1)}</td><td class="num">${r.rounds}</td></tr>`).join("")
+    : '<tr><td colspan="4" class="dim">No rounds of this kind yet.</td></tr>';
 }
 
 // Challenges

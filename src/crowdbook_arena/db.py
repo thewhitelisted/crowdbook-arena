@@ -159,6 +159,14 @@ class Store:
                              .order_by(results.c.score.desc())).mappings().all()
         return [dict(r) for r in rows]
 
+    def game_results(self, game_id: int) -> list[dict[str, Any]]:
+        """Every result of every round of the game: round_id, player_id and score."""
+        with self.engine.connect() as c:
+            rows = c.execute(select(results.c.round_id, results.c.player_id, results.c.score)
+                             .join(rounds, rounds.c.id == results.c.round_id)
+                             .where(rounds.c.game_id == game_id)).mappings().all()
+        return [dict(r) for r in rows]
+
     def abandon_running_rounds(self) -> int:
         """Marks rounds left running by a server that stopped as failed; returns how many."""
         with self.engine.begin() as c:
