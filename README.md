@@ -14,9 +14,10 @@ the network, and the server never runs anyone's code.
 > - live rounds traded by hand and by bots, with results;
 > - lockstep rounds for bots;
 > - manual challenges;
+> - leaderboards across rounds;
 > - the players' kit.
 >
-> Coming next: leaderboards across rounds, and the groundwork for hosting.
+> Coming next: the groundwork for hosting.
 
 ## Run it
 
@@ -108,6 +109,19 @@ Each challenge is drawn from the round's seed and has an exact best answer.
 Players can change their answer until the challenge closes, on its timer or when the host ends it.
 Only then are the scores and the best answer shown. A score puts the answer's worth on a scale
 from doing nothing, 0, to the best answer, 100, held between -100 and 100.
+
+## Leaderboards
+
+Each game has four leaderboards:
+- live trading (the owner's "manual" board);
+- algorithmic (lockstep rounds);
+- challenges;
+- overall.
+
+A market round's scores are in tick-lots, which differ from one market to the next, so each market
+round counts by rank. In a round of n players, first place gets 100 points and last gets 0, with
+the rest spread evenly between and ties sharing. A challenge already scores out of 100, so its
+score counts as it is. Each board adds up a player's points over its rounds.
 
 ## Markets
 

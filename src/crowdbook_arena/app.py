@@ -6,6 +6,7 @@
     POST /api/games/{code}/rounds           (host) {"kind", "market", "duration_s", "speed"}
     POST /api/games/{code}/rounds/stop      (host)
     GET  /api/games/{code}/rounds/{number}                               -> a round and its results
+    GET  /api/games/{code}/leaderboard                                   -> the game's leaderboards
     WS   /ws    first message {"type": "auth", "token"}; then order requests
 
 Host requests carry the host's token as `Authorization: Bearer <token>`.
@@ -107,6 +108,10 @@ def create_app(settings: Settings | None = None) -> Starlette:
         return JSONResponse({"round": round_info(rnd), "results":
                              hub.results(rnd["id"]) if rnd["status"] == "finished" else []})
 
+    async def get_leaderboard(request: Request) -> JSONResponse:
+        game = arena.game(request.path_params["code"])
+        return JSONResponse(arena.hub(game).leaderboard())
+
     async def kinds(_request: Request) -> JSONResponse:
         return JSONResponse([{"name": k.name, "title": k.title, "description": k.description}
                              for k in arena.kinds.values()])
@@ -181,6 +186,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
             Route("/api/games/{code}/rounds", start_round, methods=["POST"]),
             Route("/api/games/{code}/rounds/stop", stop_round, methods=["POST"]),
             Route("/api/games/{code}/rounds/{number:int}", get_round),
+            Route("/api/games/{code}/leaderboard", get_leaderboard),
             WebSocketRoute("/ws", ws_endpoint),
             Mount("/static", StaticFiles(directory=STATIC), name="static"),
         ],

@@ -16,6 +16,7 @@ from .config import Settings
 from .db import Store
 from .live import LiveRound, RequestError
 from .challenges import KINDS as CHALLENGES, AnswerError, ChallengeRound, make as make_challenge
+from .leaderboard import leaderboards
 from .lockstep import LockstepRound
 
 log = logging.getLogger(__name__)
@@ -84,6 +85,7 @@ class GameHub:
     async def attach(self, player: dict[str, Any], conn: Connection) -> None:
         self.conns.setdefault(player["id"], set()).add(conn)
         conn.send({"type": "welcome", "player": player, "game": self.info()})
+        conn.send({"type": "leaderboard", "boards": self.leaderboard()})
         runner = self.runner
         if isinstance(runner, LiveRound) and self.round:
             snap = runner.snapshot(player["id"])
@@ -276,7 +278,13 @@ class GameHub:
         self.round = self.runner = None
         await self.broadcast({"type": "round_ended", "round": round_info(
             self.arena.store.round(rnd["id"])), "results": self.results(rnd["id"])})
+        await self.broadcast({"type": "leaderboard", "boards": self.leaderboard()})
         await self.broadcast_info()
+
+    def leaderboard(self) -> dict[str, Any]:
+        store = self.arena.store
+        gid = self.game["id"]
+        return leaderboards(store.rounds(gid), store.game_results(gid), store.players(gid))
 
     def results(self, round_id: int) -> list[dict[str, Any]]:
         rows = self.arena.store.results(round_id)
