@@ -18,8 +18,10 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=settings.port)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    app = create_app(settings)
     print(f"crowdbook-arena on http://{args.host}:{args.port}  (database {settings.database_url})")
-    uvicorn.run(create_app(settings), host=args.host, port=args.port, log_level="warning",
+    print(f"market kinds: {', '.join(app.state.arena.kinds)}", flush=True)
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning",
                 ws_max_size=64 * 1024, proxy_headers=True)
 
 

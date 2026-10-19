@@ -1,0 +1,62 @@
+# The arena behind Caddy, which gets and renews its HTTPS certificate. docs/hosting.md has the
+# steps. Settings come from .env (see .env.example).
+#
+#   docker compose up -d                       # SQLite on the arena-data volume
+#   docker compose --profile postgres up -d    # with Postgres; set ARENA_DATABASE_URL to match
+
+services:
+  arena:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ARENA_HOST: 0.0.0.0
+      ARENA_PORT: "8000"
+      # Only Caddy reaches the arena, on the compose network: trust the client address and
+      # scheme it passes on.
+      FORWARDED_ALLOW_IPS: "*"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false   # only with --profile postgres
+    volumes:
+      - arena-data:/data
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [arena]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ARENA_DOMAIN: ${ARENA_DOMAIN:?set ARENA_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  postgres:
+    image: postgres:16
+    profiles: [postgres]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: arena
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: arena
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arena -d arena"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  arena-data:
+  caddy-data:
+  caddy-config:
+  postgres-data:
