@@ -5,3 +5,6 @@ __pycache__/
 /data/
 *.db
 dist/
+.env
+plugins/*
+!plugins/.gitkeep

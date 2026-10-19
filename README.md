@@ -15,9 +15,8 @@ the network, and the server never runs anyone's code.
 > - lockstep rounds for bots;
 > - manual challenges;
 > - leaderboards across rounds;
-> - the players' kit.
->
-> Coming next: the groundwork for hosting.
+> - the players' kit;
+> - the groundwork for hosting: Docker, and Caddy for HTTPS ([docs/hosting.md](docs/hosting.md)).
 
 ## Run it
 

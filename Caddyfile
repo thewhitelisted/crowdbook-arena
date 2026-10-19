@@ -1,0 +1,6 @@
+# Caddy in front of the arena: HTTPS with a certificate from Let's Encrypt, renewed by itself, and
+# WebSockets passed through. ARENA_DOMAIN comes from .env.
+{$ARENA_DOMAIN} {
+	encode gzip
+	reverse_proxy arena:8000
+}
