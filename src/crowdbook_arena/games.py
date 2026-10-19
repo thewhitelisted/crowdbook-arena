@@ -216,13 +216,16 @@ class GameHub:
 
     async def _start_challenge(self, spec: dict[str, Any], seed: int,
                                players: list[dict[str, Any]]) -> dict[str, Any]:
-        """Starts a challenge round; called with the lock held."""
+        """Starts a challenge round, for the game's human players; called with the lock
+        held."""
         which = spec.get("challenge")
         if which not in CHALLENGES:
             raise GameError(f"challenge: one of {', '.join(CHALLENGES)}")
         duration = _int(spec.get("duration_s", 300), "duration_s", 10,
                         self.arena.settings.max_challenge_duration_s)
         challenge = make_challenge(which, seed)
+        # Challenges are for people: bots trade, and would only collect zeros here.
+        players = [p for p in players if p["kind"] == "human"]
         config = {"duration_s": duration, "challenge": which, "title": challenge.title}
         rnd = self.arena.store.add_round(self.game["id"], "challenge", None, seed, config)
         runner = ChallengeRound(round_id=rnd["id"], challenge=challenge,

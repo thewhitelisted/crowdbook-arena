@@ -264,6 +264,9 @@ class ChallengeRound:
 
     def answer(self, player_id: int, answer: Any) -> dict[str, Any]:
         """Keeps a player's answer, replacing any before it. Raises AnswerError."""
+        if player_id not in self.seats:
+            raise AnswerError("this challenge is for the players who were in the game when it "
+                              "opened, and not for bots")
         if self._closed:
             raise AnswerError("the challenge has closed")
         checked = self.challenge.check(answer)

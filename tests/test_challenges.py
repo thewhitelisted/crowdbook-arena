@@ -77,6 +77,7 @@ def test_a_challenge_round_end_to_end(server):
     code = game["code"]
     bob = server.join(code, "bob")
     carol = server.join(code, "carol")
+    bot = server.join(code, "robo", "bot")
     seen = []
 
     async def go():
@@ -105,6 +106,11 @@ def test_a_challenge_round_end_to_end(server):
         again = await recv_until(b, lambda m: m["type"] == "challenge")
         assert again["answer"] == best
         seen.append(again)
+        r = await connect(server, bot["token"])
+        await r.send(json.dumps({"type": "challenge_answer", "answer": {"bid": 5}}))
+        err = await recv_until(r, lambda m: m["type"] == "error")
+        assert "not for bots" in err["message"]
+        await r.close()
         info = server.http.get(f"/api/games/{code}").json()
         seen.append(info)
         await asyncio.to_thread(server.post, f"/api/games/{code}/rounds/stop", {}, game["token"])
@@ -118,6 +124,7 @@ def test_a_challenge_round_end_to_end(server):
     for msg in seen:
         text = json.dumps(msg)
         assert '"score"' not in text and '"solution"' not in text, text
+    assert {r["name"] for r in ended["results"]} == {"alice", "bob", "carol"}  # not the bot
     rows = {r["name"]: r for r in ended["results"]}
     assert rows["bob"]["score"] == pytest.approx(100) and rows["bob"]["rank"] == 1
     assert rows["carol"]["score"] == 0 and rows["carol"]["details"]["answered"] is False
