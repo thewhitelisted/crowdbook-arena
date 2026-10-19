@@ -82,8 +82,10 @@ far away the bot is, or how long it thinks, changes nothing as long as it answer
 round's turn timeout. A late answer, or none, leaves its quotes as they were and takes nothing.
 
 A bot's score in a lockstep round is exactly the score `arena-kit test` gives it offline on the
-same market and seed, and the tests check this. A bot without a connection stands aside, so it
-cannot hold up the round.
+same market and seed, and the tests check this. All the copies move through the market together, one simulated second at a time. No bot is shown
+a moment of its market until every bot has finished the second before it, so no bot can run ahead
+and tell another what is coming. A bot that disconnects is waited for a few seconds, then stands
+aside at the others' pace until it comes back.
 
 Later, perhaps: a shared lockstep market, where every bot trades the same book turn by turn. That
 needs a lockstep gateway mode with several seats in crowdbook itself, which the public engine does

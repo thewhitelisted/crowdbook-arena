@@ -166,9 +166,9 @@ def create_app(settings: Settings | None = None) -> Starlette:
     @asynccontextmanager
     async def lifespan(_app: Starlette):
         yield
+        # Rounds under way end as failed, without results, as docs/hosting.md says.
         for hub in list(arena.hubs.values()):
-            if hub.runner is not None:
-                await hub.runner.stop()
+            await hub.abort()
 
     app = Starlette(
         routes=[

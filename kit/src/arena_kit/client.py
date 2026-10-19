@@ -192,7 +192,13 @@ async def play(bot: Bot, server: str, token: str, *, rounds: int | None = None,
                 # A lockstep round: answer every turn with this turn's quote.
                 if msg["round"] != live_round:
                     live_round = msg["round"]
-                    bot.on_start({"mode": "lockstep", "round": msg["round"]})
+                    s = msg["state"]
+                    try:
+                        bot.on_start({"mode": "lockstep", "round": msg["round"],
+                                      "max_position": s["max_position"],
+                                      "max_order_quantity": s["max_order_quantity"]})
+                    except Exception:
+                        log.exception("the bot's on_start raised")
                 try:
                     quote = bot.on_turn(State.from_json(msg["state"]))
                 except Exception:

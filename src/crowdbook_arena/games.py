@@ -89,8 +89,9 @@ class GameHub:
             conn.send({"type": "live_snapshot", "round": self.round["id"], "seated": snap is not None,
                        "state": snap or runner.any_snapshot()})
         elif isinstance(runner, LockstepRound) and self.round:
+            runner.reconnected(player["id"])
             conn.send({"type": "lockstep_progress", "round": self.round["id"],
-                       "turns": {str(k): v for k, v in runner.progress().items()}})
+                       **runner.progress()})
         await self.broadcast_info()
 
     async def detach(self, player_id: int, conn: Connection) -> None:
@@ -191,8 +192,8 @@ class GameHub:
                         connected=lambda pid: bool(self.conns.get(pid)),
                         on_progress=self._lockstep_progress, on_end=on_end)
                 self.round, self.runner = rnd, runner
-                await self.broadcast({"type": "round_started", "round": round_info(rnd)})
                 await runner.start()
+                await self.broadcast({"type": "round_started", "round": round_info(rnd)})
             except BaseException as e:
                 log.exception("round %s did not start", rnd["id"])
                 self.round = self.runner = None
@@ -214,10 +215,19 @@ class GameHub:
             if runner is not None and pid not in runner.seats:
                 await self.send(pid, msg)
 
-    async def _lockstep_progress(self, progress: dict[int, int]) -> None:
+    async def _lockstep_progress(self, progress: dict[str, Any]) -> None:
         if self.round:
             await self.broadcast({"type": "lockstep_progress", "round": self.round["id"],
-                                  "turns": {str(k): v for k, v in progress.items()}})
+                                  **progress})
+
+    async def abort(self) -> None:
+        """The server is stopping: a round under way ends without results, as failed."""
+        runner, rnd = self.runner, self.round
+        if runner is None or rnd is None:
+            return
+        await runner.abort()
+        self.arena.store.finish_round(rnd["id"], "failed", {})
+        self.round = self.runner = None
 
     async def stop_round(self, host: dict[str, Any]) -> None:
         if not host["is_host"]:

@@ -87,7 +87,7 @@ function handle(msg) {
       $("results").classList.add("hidden");
       break;
     case "lockstep_progress":
-      showLockstep(msg.turns);
+      showLockstep(msg);
       break;
     case "live_snapshot":
       roundId = msg.round;
@@ -148,17 +148,18 @@ function setGame(g) {
   }
 }
 
-function showLockstep(turns) {
+function showLockstep(p) {
   if (!game || !game.current || game.current.kind !== "lockstep") return;
   $("lockstep").classList.remove("hidden");
   $("lockstep-title").textContent =
     `round ${game.current.number}: ${game.current.config.market_title || game.current.market}`;
-  const byId = new Map(game.players.map((p) => [String(p.id), p]));
-  $("lockstep-body").innerHTML = Object.entries(turns).map(([id, turn]) => {
-    const p = byId.get(id);
-    return `<tr><td>${esc(p ? p.name : id)}</td><td class="num">${turn}</td>` +
-      `<td><span class="dot ${p && p.online ? "on" : ""}"></span></td></tr>`;
-  }).join("");
+  $("lockstep-clock").textContent = `${clock(p.time / SEC)} / ${clock(p.duration / SEC)}`;
+  $("lockstep-bar").style.width = `${p.duration ? Math.min(100, (100 * p.time) / p.duration) : 0}%`;
+  const done = new Set(p.done.map(String));
+  const bots = game.players.filter((x) => x.kind === "bot");
+  $("lockstep-body").innerHTML = bots.map((b) =>
+    `<tr><td>${esc(b.name)}</td><td>${done.has(String(b.id)) ? "finished" : "trading"}</td>` +
+    `<td><span class="dot ${b.online ? "on" : ""}"></span></td></tr>`).join("");
 }
 
 function showKindFields() {

@@ -98,8 +98,11 @@
   <section class="panel hidden" id="lockstep">
     <h2>Lockstep round <span class="dim" id="lockstep-title"></span></h2>
     <p class="dim">Each bot trades its own copy of the same market, and the market waits for it at
-      every turn. Results come when every bot has finished.</p>
-    <table><thead><tr><th>Bot</th><th class="num">Turn</th><th>Connected</th></tr></thead>
+      every turn. All the copies move through the market together, a simulated second at a
+      time. Results come when every bot has finished.</p>
+    <div class="row"><span id="lockstep-clock" class="num"></span></div>
+    <div class="clock"><div id="lockstep-bar"></div></div>
+    <table style="margin-top:10px"><thead><tr><th>Bot</th><th></th><th>Connected</th></tr></thead>
       <tbody id="lockstep-body"></tbody></table>
   </section>
 

@@ -303,6 +303,18 @@ class LiveRound:
                     seat.task.cancel()
             await self._finish()
 
+    async def abort(self) -> None:
+        """The server is stopping: kill the market and end without results; the round is
+        recorded as failed."""
+        self._ended = True  # so that no results are recorded
+        await self._abort()
+        for seat in self.seats.values():
+            if seat.task:
+                seat.task.cancel()
+        if self._tokens is not None:
+            self._tokens.unlink(missing_ok=True)
+        self._finished.set()
+
     async def wait(self) -> None:
         await self._finished.wait()
 

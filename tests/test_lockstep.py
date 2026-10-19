@@ -131,7 +131,8 @@ def test_the_host_can_end_a_lockstep_round(server):
                                 duration_s=600)
         await recv_until(ws, lambda m: m["type"] == "turn")
         progress = await recv_until(host, lambda m: m["type"] == "lockstep_progress")
-        assert progress["turns"] == {str(bot["player"]["id"]): 1}
+        assert progress["duration"] == 600 * 10**9 and progress["done"] == []
+        assert "turns" not in progress
         r = await asyncio.to_thread(server.post, f"/api/games/{code}/rounds/stop", {},
                                     game["token"])
         assert r.status_code == 200
@@ -149,3 +150,108 @@ def test_lockstep_needs_bots(server):
     server.join(game["code"], "bob")
     r = server.post(f"/api/games/{game['code']}/rounds", {"kind": "lockstep"}, game["token"])
     assert r.status_code == 400 and "bots" in r.json()["error"]
+
+
+class Recorder(StarterBot):
+    """The starter bot, noting when it saw each moment of its market."""
+
+    def __init__(self, log, name, delay=0.0):
+        self.log, self.name, self.delay = log, name, delay
+
+    def on_turn(self, state):
+        self.log.append((time.monotonic(), self.name, state.time))
+        if self.delay:
+            time.sleep(self.delay)
+        return super().on_turn(state)
+
+
+def test_no_bot_sees_its_market_ahead_of_the_others(server):
+    game = server.new_game("alice")
+    code = game["code"]
+    fast = server.join(code, "fast", "bot")
+    slow = server.join(code, "slow", "bot")
+    log = []
+
+    async def go():
+        tasks = [asyncio.create_task(asyncio.to_thread(
+                     asyncio.run, play(Recorder(log, "fast"), server.url, fast["token"],
+                                       rounds=1))),
+                 asyncio.create_task(asyncio.to_thread(
+                     asyncio.run, play(Recorder(log, "slow", delay=0.05), server.url,
+                                       slow["token"], rounds=1)))]
+        await asyncio.sleep(0.5)
+        await asyncio.to_thread(start, server, code, game["token"], turn_timeout_ms=2000,
+                                duration_s=15)
+        return await asyncio.wait_for(asyncio.gather(*tasks), 60)
+
+    asyncio.run(go())
+    log.sort()
+    latest = {"fast": 0, "slow": 0}
+    worst = 0
+    for _, name, t in log:
+        latest[name] = t
+        if all(latest.values()):
+            worst = max(worst, abs(latest["fast"] - latest["slow"]))
+    # Without the shared clock the fast bot would finish while the slow one was at second 2.
+    assert worst <= 2 * 10**9, worst
+
+
+def test_a_bot_that_drops_and_comes_back_carries_on(server):
+    game = server.new_game("alice")
+    code = game["code"]
+    bot = server.join(code, "comeback", "bot")
+
+    async def go():
+        ws = await connect(server, bot["token"])
+        watcher = await connect(server, game["token"])
+        await asyncio.to_thread(start, server, code, game["token"], turn_timeout_ms=2000,
+                                duration_s=20)
+        for _ in range(3):
+            turn = await recv_until(ws, lambda m: m["type"] == "turn")
+            await ws.send(json.dumps({"type": "orders", "turn": turn["turn"], "bid": None,
+                                      "ask": None, "take": 0}))
+        await ws.close()
+        await asyncio.sleep(0.5)
+        ws = await connect(server, bot["token"])
+        turn = await recv_until(ws, lambda m: m["type"] == "turn")
+        assert turn["state"]["time"] < 6 * 10**9  # it waited, rather than playing on without us
+        await ws.send(json.dumps({"type": "orders", "turn": turn["turn"], "bid": None,
+                                  "ask": None, "take": 0}))
+        while True:
+            msg = await recv_until(ws, lambda m: m["type"] in ("turn", "round_ended"))
+            if msg["type"] == "round_ended":
+                break
+            await ws.send(json.dumps({"type": "orders", "turn": msg["turn"], "bid": None,
+                                      "ask": None, "take": 0}))
+        await ws.close()
+        await watcher.close()
+        return msg
+
+    ended = asyncio.run(go())
+    row = ended["results"][0]
+    # At most the turn in flight as it dropped went unanswered, and the turn after it, if the
+    # bot was not back in time.
+    assert row["details"]["ended"]
+    assert row["details"]["absent"] + row["details"]["timeouts"] <= 2
+
+
+def test_stopping_the_server_fails_a_round_under_way(tmp_path):
+    from conftest import Server
+    from crowdbook_arena.db import Store
+
+    s = Server(tmp_path)
+    game = s.new_game("alice")
+    bot = s.join(game["code"], "waiter", "bot")
+
+    async def go():
+        ws = await connect(s, bot["token"])
+        await asyncio.to_thread(start, s, game["code"], game["token"], turn_timeout_ms=60_000,
+                                duration_s=600)
+        await recv_until(ws, lambda m: m["type"] == "turn")
+        await ws.close()
+    asyncio.run(go())
+    s.stop()
+    store = Store(f"sqlite:///{tmp_path}/arena.db")
+    gid = store.game_by_code(game["code"])["id"]
+    rnd = store.rounds(gid)[0]
+    assert rnd["status"] == "failed" and store.results(rnd["id"]) == []
