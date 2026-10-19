@@ -30,7 +30,8 @@ class Settings:
     max_live_duration_s: int = 3600
     rate_limit: int = 50           # gateway messages a seat may send a second
     feed_interval_ms: int = 100    # market data batched this often to every seat
-    lockstep_timeout_ms: int = 2000
+    lockstep_timeout_ms: int = 2000   # how long a bot has to answer a turn, unless a round says
+    max_lockstep_duration_s: int = 7200
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -47,6 +48,8 @@ class Settings:
             rate_limit=_int("ARENA_RATE_LIMIT", cls.rate_limit),
             feed_interval_ms=_int("ARENA_FEED_INTERVAL_MS", cls.feed_interval_ms),
             lockstep_timeout_ms=_int("ARENA_LOCKSTEP_TIMEOUT_MS", cls.lockstep_timeout_ms),
+            max_lockstep_duration_s=_int("ARENA_MAX_LOCKSTEP_DURATION_S",
+                                         cls.max_lockstep_duration_s),
         )
 
 

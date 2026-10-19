@@ -167,8 +167,8 @@ def create_app(settings: Settings | None = None) -> Starlette:
     async def lifespan(_app: Starlette):
         yield
         for hub in list(arena.hubs.values()):
-            if hub.live is not None:
-                await hub.live.stop()
+            if hub.runner is not None:
+                await hub.runner.stop()
 
     app = Starlette(
         routes=[
