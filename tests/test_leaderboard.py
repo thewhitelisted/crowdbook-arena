@@ -30,7 +30,10 @@ def test_boards_by_kind_and_overall():
                {"round_id": 11, "player_id": 2, "score": 3.0},
                {"round_id": 12, "player_id": 1, "score": 80.0},
                {"round_id": 12, "player_id": 3, "score": -20.0},
-               {"round_id": 13, "player_id": 3, "score": 999.0}]
+               {"round_id": 13, "player_id": 3, "score": 999.0},
+              {"round_id": 14, "player_id": 1, "score": 0.0},
+              {"round_id": 14, "player_id": 2, "score": 0.0}]
+    rounds.append({"id": 14, "kind": "lockstep", "status": "finished"})  # nobody traded
     b = leaderboards(rounds, results, players)
     assert [(r["name"], r["points"]) for r in b["live"]["rows"]] == [
         ("ann", 100), ("bot", 50), ("cy", 0)]

@@ -3,7 +3,8 @@
 A market round's scores are in tick-lots, which differ from market to market, so each counts by
 rank: a round of n players gives the winner 100 points, the last 0 and the rest evenly between,
 ties sharing. A challenge's score is already on a fixed scale (0 for doing nothing, 100 for the
-best answer) and counts as it is. Every board adds up a player's points over its rounds.
+best answer) and counts as it is. Every board adds up a player's points over its rounds. A market
+round in which every seat scored the same, as when nobody traded, counts for no one.
 """
 
 from __future__ import annotations
@@ -46,6 +47,8 @@ def leaderboards(rounds: list[dict[str, Any]], results: list[dict[str, Any]],
         scores = by_round.get(rnd["id"])
         if rnd["status"] != "finished" or not scores:
             continue
+        if rnd["kind"] != "challenge" and len(scores) > 1 and len(set(scores.values())) == 1:
+            continue  # every seat scored the same, as when nobody traded: nothing to rank
         points = dict(scores) if rnd["kind"] == "challenge" else rank_points(scores)
         for pid, pts in points.items():
             for board in (rnd["kind"], "overall"):
