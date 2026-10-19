@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux with the browser test; macOS on Apple silicon checks that everything installs
+        # from wheels, with nothing to compile.
+        include:
+          - os: ubuntu-latest
+            browser: true
+          - os: macos-14
+            browser: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          if [ "${{ matrix.browser }}" = "true" ]; then
+            uv sync --locked --group browser
+            uv run playwright install --with-deps chromium
+          else
+            # Every dependency from a wheel: none of them may be built from source.
+            uv sync --locked $(for p in crowdbook-engine numpy sqlalchemy greenlet websockets \
+              starlette uvicorn; do echo --no-build-package $p; done)
+          fi
+      - name: Test
+        run: uv run pytest -q

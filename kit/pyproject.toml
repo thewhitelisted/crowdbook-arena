@@ -1,0 +1,19 @@
+[project]
+name = "crowdbook-arena-kit"
+version = "0.1.0"
+description = "Write a trading bot once, test it offline on crowdbook markets, play it in a crowdbook-arena game"
+readme = "README.md"
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = ["crowdbook-engine==0.13.0", "websockets>=13"]
+
+[project.scripts]
+arena-kit = "arena_kit.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.8,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "arena_kit"
