@@ -13,9 +13,10 @@ the network, and the server never runs anyone's code.
 > - games with join codes;
 > - live rounds traded by hand and by bots, with results;
 > - lockstep rounds for bots;
+> - manual challenges;
 > - the players' kit.
 >
-> Coming next: manual challenges, leaderboards across rounds, and the groundwork for hosting.
+> Coming next: leaderboards across rounds, and the groundwork for hosting.
 
 ## Run it
 
@@ -37,6 +38,7 @@ Open <http://127.0.0.1:8000>:
    - A live round runs on the clock, at the speed you choose, and every player in the game gets
      a seat in it.
    - A lockstep round is for the game's bots (see [Bots](#bots)).
+   - A challenge round is a one-off decision for everyone (see [Challenges](#challenges)).
 4. Trade from the ladder or the order ticket:
    - Click a bid size to bid at that price, or an offer size to offer at it.
    - Click your own order (in yellow) to cancel it.
@@ -91,6 +93,21 @@ Later, perhaps: a shared lockstep market, where every bot trades the same book t
 needs a lockstep gateway mode with several seats in crowdbook itself, which the public engine does
 not have yet.
 
+## Challenges
+
+A challenge round puts one decision to every player, after IMC Prosperity's manual challenges.
+Each challenge is drawn from the round's seed and has an exact best answer.
+
+| Challenge | The decision | What it is worth |
+|---|---|---|
+| Sealed bids | A bid in a first-price auction against rivals whose bids are uniform on a range you are told | The profit you expect |
+| Round trip | A path of up to five trades through a table of exchange rates, from Shells back to Shells | The Shells you end with |
+| Stake | The fraction of your wealth to stake, again and again, on a bet with known odds | The growth you expect, per bet |
+
+Players can change their answer until the challenge closes, on its timer or when the host ends it.
+Only then are the scores and the best answer shown. A score puts the answer's worth on a scale
+from doing nothing, 0, to the best answer, 100, held between -100 and 100.
+
 ## Markets
 
 Public market kinds come from the kit (`arena-kit markets`):
@@ -122,6 +139,7 @@ All settings come from environment variables:
 | `ARENA_MAX_LIVE_DURATION_S` | `3600` | The longest live round. |
 | `ARENA_MAX_LOCKSTEP_DURATION_S` | `7200` | The longest lockstep round, in simulated seconds. |
 | `ARENA_LOCKSTEP_TIMEOUT_MS` | `2000` | A lockstep turn's timeout, unless the round sets its own. |
+| `ARENA_MAX_CHALLENGE_DURATION_S` | a week | The longest a challenge can stay open. |
 | `ARENA_RATE_LIMIT` | `50` | Messages a seat may send a second. |
 | `ARENA_FEED_INTERVAL_MS` | `100` | How often market data is batched to screens. |
 | `ARENA_CROWDBOOK` | the venv's | The `crowdbook` command that serves live rounds. |

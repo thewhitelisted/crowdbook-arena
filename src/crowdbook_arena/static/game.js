@@ -81,13 +81,22 @@ function handle(msg) {
     case "game": setGame(msg.game); break;
     case "error":
       if (msg.fatal) { $("status").textContent = msg.message; }
-      else { $("order-error").textContent = msg.message; }
+      else if (msg.request && msg.request.type === "challenge_answer") {
+        $("challenge-error").textContent = msg.message;
+      } else { $("order-error").textContent = msg.message; }
       break;
     case "round_started":
       $("results").classList.add("hidden");
       break;
     case "lockstep_progress":
       showLockstep(msg);
+      break;
+    case "challenge":
+      showChallenge(msg);
+      break;
+    case "challenge_saved":
+      $("challenge-error").textContent = "";
+      $("challenge-saved").textContent = `Saved: ${describeAnswer(msg.answer)}.`;
       break;
     case "live_snapshot":
       roundId = msg.round;
@@ -107,6 +116,8 @@ function handle(msg) {
       seat = null;
       $("trading").classList.add("hidden");
       $("lockstep").classList.add("hidden");
+      $("challenge").classList.add("hidden");
+      clearInterval(challengeTimer);
       break;
   }
 }
@@ -163,10 +174,72 @@ function showLockstep(p) {
 }
 
 function showKindFields() {
-  const lockstep = $("round-kind").value === "lockstep";
-  for (const el of document.querySelectorAll(".live-only")) el.classList.toggle("hidden", lockstep);
-  for (const el of document.querySelectorAll(".lockstep-only")) el.classList.toggle("hidden", !lockstep);
+  const kind = $("round-kind").value;
+  const show = { "live-only": kind === "live", "lockstep-only": kind === "lockstep",
+    "challenge-only": kind === "challenge", "market-only": kind !== "challenge" };
+  for (const [cls, on] of Object.entries(show)) {
+    for (const el of document.querySelectorAll(`.${cls}`)) el.classList.toggle("hidden", !on);
+  }
 }
+
+// Challenges
+
+let challenge = null;
+let challengeTimer = null;
+
+function describeAnswer(a) {
+  if (!a) return "nothing yet";
+  if ("bid" in a) return `bid ${a.bid}`;
+  if ("path" in a) return a.path.length ? `Shells → ${a.path.join(" → ")}` : "no trades";
+  if ("fraction" in a) return `stake ${a.fraction}`;
+  return JSON.stringify(a);
+}
+
+function showChallenge(c) {
+  challenge = c;
+  $("challenge").classList.remove("hidden");
+  $("challenge-title").textContent = c.title;
+  $("challenge-prompt").textContent = c.prompt;
+  $("challenge-saved").textContent = `Your answer: ${describeAnswer(c.answer)}.`;
+  const form = $("challenge-form");
+  const data = $("challenge-data");
+  data.innerHTML = "";
+  if (c.kind === "auction") {
+    form.innerHTML = `<label>Bid <input type="number" id="ans-bid" min="0" step="1" value="${c.answer ? c.answer.bid : ""}"></label>` +
+      `<button class="primary">Save</button>`;
+  } else if (c.kind === "kelly") {
+    form.innerHTML = `<label>Fraction <input type="number" id="ans-fraction" min="0" max="1" step="0.001" value="${c.answer ? c.answer.fraction : ""}"></label>` +
+      `<button class="primary">Save</button>`;
+  } else if (c.kind === "conversion") {
+    const g = c.data.goods;
+    data.innerHTML = `<table><thead><tr><th>1 unit of ↓ buys →</th>${g.map((x) => `<th class="num">${esc(x)}</th>`).join("")}</tr></thead><tbody>` +
+      c.data.rates.map((row, i) => `<tr><th>${esc(g[i])}</th>${row.map((r, j) => `<td class="num">${i === j ? "" : r}</td>`).join("")}</tr>`).join("") +
+      "</tbody></table>";
+    const opts = ['<option value="">—</option>', ...g.map((x) => `<option>${esc(x)}</option>`)].join("");
+    const steps = [];
+    for (let i = 0; i < c.data.max_trades; i++) steps.push(`<select class="ans-step">${opts}</select>`);
+    form.innerHTML = `Shells → ${steps.join(" → ")} <button class="primary">Save</button>`;
+    const path = c.answer ? c.answer.path : [];
+    form.querySelectorAll(".ans-step").forEach((el, i) => { el.value = path[i] || ""; });
+  }
+  clearInterval(challengeTimer);
+  const tick = () => {
+    const left = Math.max(0, c.closes_at - Date.now() / 1000);
+    $("challenge-clock").textContent = `Closes in ${clock(left)}.`;
+  };
+  tick();
+  challengeTimer = setInterval(tick, 1000);
+}
+
+$("challenge-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!challenge) return;
+  let answer;
+  if (challenge.kind === "auction") answer = { bid: Number($("ans-bid").value) };
+  else if (challenge.kind === "kelly") answer = { fraction: Number($("ans-fraction").value) };
+  else answer = { path: [...document.querySelectorAll(".ans-step")].map((el) => el.value).filter((v) => v) };
+  send({ type: "challenge_answer", answer });
+});
 $("round-kind").onchange = showKindFields;
 
 function describeMarket() {
@@ -179,9 +252,11 @@ $("start-round").onclick = async () => {
   $("host-error").textContent = "";
   try {
     const kind = $("round-kind").value;
-    const spec = { kind, market: $("market").value, duration_s: parseInt($("duration").value, 10) };
+    const spec = { kind, duration_s: parseInt($("duration").value, 10) };
     if (kind === "live") spec.speed = parseFloat($("speed").value);
-    else spec.turn_timeout_ms = parseInt($("turn-timeout").value, 10);
+    if (kind === "lockstep") spec.turn_timeout_ms = parseInt($("turn-timeout").value, 10);
+    if (kind === "challenge") spec.challenge = $("challenge-kind").value;
+    else spec.market = $("market").value;
     await post(`/api/games/${code}/rounds`, spec, token);
   } catch (err) { $("host-error").textContent = err.message; }
 };
@@ -387,10 +462,16 @@ $("cancel-all").onclick = () => send({ type: "cancel_all" });
 
 function showResults(round, results) {
   $("results").classList.remove("hidden");
-  $("results-title").textContent = `round ${round.number}: ${round.config.market_title || round.market || round.kind}`;
+  $("results-title").textContent = `round ${round.number}: ${round.config.market_title || round.config.title || round.market || round.kind}`;
+  const sol = round.config.solution;
+  $("solution").classList.toggle("hidden", !sol);
+  if (sol) {
+    $("solution").textContent = `The best answer: ${describeAnswer(sol.answer)}, worth ${sol.value} ` +
+      `(doing nothing is worth ${sol.nothing}). Scores are out of 100.`;
+  }
   $("results-body").innerHTML = results.map((r) =>
     `<tr class="${me && r.player_id === me.id ? "pos" : ""}"><td>${r.rank}</td><td>${esc(r.name)}${r.kind === "bot" ? '<span class="badge">bot</span>' : ""}</td>` +
-    `<td class="num">${fmt(r.score)}</td><td class="num">${r.details.position ?? ""}</td>` +
+    `<td class="num">${fmt(r.score)}</td><td class="num">${r.details.position ?? (r.details.answered === false ? "no answer" : r.details.answer ? esc(describeAnswer(r.details.answer)) : "")}</td>` +
     `<td class="num">${r.details.fees != null ? Number(r.details.fees).toFixed(1) : ""}</td>` +
     `<td class="num">${r.details.traded ?? ""}</td></tr>`).join("");
 }
