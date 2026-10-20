@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "markets":
         for kind in PUBLIC_KINDS.values():
-            print(f"{kind.name:10} {kind.description}")
+            print(f"{kind.name:10} {kind.title}: {kind.description}")
     elif args.command == "test":
         bot = load_bot(args.bot)
         scores = []

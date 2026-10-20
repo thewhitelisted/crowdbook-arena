@@ -148,11 +148,13 @@ score counts as it is. Each board adds up a player's points over its rounds.
 
 Public market kinds come from the kit (`arena-kit markets`):
 
-| Kind | What it is |
-|---|---|
-| `calm` | A few trades a second around a slowly wandering true value. |
-| `news` | The true value jumps about once a minute. Experts see the jump early, the crowd late. Players can get a headline too (see below). |
-| `trending` | A livelier value and many trend followers, so prices overshoot. |
+| Kind | Asset | What it is |
+|---|---|---|
+| `calm` | Sea Salt | A calm asset: its fair value drifts slowly, with no news. |
+| `news` | Pearls | Mostly quiet, but its fair value jumps when news breaks. The well-informed hear first, the crowd later. Players can get a headline too (see below). |
+| `trending` | Coral | Volatile and trend-prone: moves overshoot and come back. |
+
+Screens show the asset's name; bots and `arena-kit test --market` use the kind.
 
 In the `news` market each jump in the true value comes with a headline, such as "Good news: value
 up about 8". The host chooses when players see it:
@@ -166,11 +168,20 @@ the same moments live, in lockstep and offline (`arena-kit test --news`). The ar
 market's value path itself, so that it knows each jump, and gives it to crowdbook (0.14 or later)
 as a recorded path.
 
-Each round comes with a briefing: who trades, the fees, the limits, when headlines come, and how
-the score is counted, without anything of the round's own path. Screens show it in a panel while
-the round runs, and the host sees it in the lobby when choosing the market. Bots get it in
-`on_start(info)["briefing"]`, live, in lockstep and offline. `arena-kit practice` records the public
-kinds as CSV files to study, true value included (see the [kit's README](kit/README.md)).
+Each round comes with a briefing, written as an asset sheet: what the asset is, how its price
+behaves, who trades it, the fees, the limits, how the score is counted and when headlines come. It
+says nothing of the round's own path. The host sees it in the lobby when choosing the market. Bots
+get it in `on_start(info)["briefing"]`, live, in lockstep and offline.
+
+A live round opens with the briefing, before the market runs. Every human player connected sees it
+with an "I'm ready" button and who is still reading. The market opens when everyone connected has
+said they are ready. Players who are not connected are not waited for; one who connects during
+the briefing must read it too. Bots are ready at once. The host can "Start now" without waiting
+(`POST /api/games/{code}/rounds/begin`). During the round the briefing stays in a panel below the
+trading screen. Lockstep rounds, for bots, start at once.
+
+`arena-kit practice` records the public kinds as CSV files to study, fair value included (see the
+[kit's README](kit/README.md)).
 
 A Python package installed on the server can add kinds of its own through the
 `crowdbook_arena.market_kinds` entry point group (see `src/crowdbook_arena/kinds.py`). Those kinds
