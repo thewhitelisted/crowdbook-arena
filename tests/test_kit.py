@@ -8,13 +8,14 @@ import pytest
 
 from arena_kit import Bot, PUBLIC_KINDS, Quote, State, SteppedMarket, run_local
 from arena_kit.client import LiveDriver, ws_url
+from arena_kit.markets import is_linked
 from arena_kit.tracker import SeatTracker
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "kit" / "examples"))
 from starter_bot import StarterBot  # noqa: E402
 
 
-@pytest.mark.parametrize("kind", sorted(PUBLIC_KINDS))
+@pytest.mark.parametrize("kind", sorted(k for k, v in PUBLIC_KINDS.items() if not is_linked(v)))
 def test_local_runs_are_deterministic(kind):
     a = run_local(StarterBot(), kind, seed=11, duration_s=60)
     b = run_local(StarterBot(), kind, seed=11, duration_s=60)

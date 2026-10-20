@@ -28,6 +28,6 @@ def test_plugins_add_kinds_and_bad_ones_are_skipped(monkeypatch):
            FakeEntryPoint("broken", object()), FakeEntryPoint("clash", Extra(name="calm"))]
     monkeypatch.setattr(kinds_module, "entry_points", lambda group: eps)
     found = kinds_module.load_kinds()
-    assert {"calm", "news", "trending", "extra", "more"} == set(found)
+    assert {"calm", "news", "trending", "pair", "basket", "extra", "more"} == set(found)
     assert found["calm"].title == "Sea Salt"  # a plug-in cannot replace a kind
     assert set(kinds_module.load_kinds(("extra", "calm"))) == {"extra", "calm"}

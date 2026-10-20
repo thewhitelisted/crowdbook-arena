@@ -12,6 +12,8 @@ let me = null;
 let game = null;
 let ws = null;
 let seat = null;      // the seat's state in the live round, kept from the gateway's messages
+let seats = null;     // in a round with several assets: each one's seat, by symbol
+let asset = null;     // and the one shown
 let roundId = null;
 let seated = false;
 let ladderCenter = null;
@@ -114,19 +116,29 @@ function handle(msg) {
     case "live_snapshot":
       roundId = msg.round;
       seated = msg.seated;
-      seat = fromSnapshot(msg.state);
+      if (msg.state.assets) {
+        seats = Object.fromEntries(Object.entries(msg.state.assets).map(([k, v]) => [k, fromSnapshot(v)]));
+        if (!(asset in seats)) asset = Object.keys(seats)[0];
+        seat = seats[asset];
+      } else {
+        seats = asset = null;
+        seat = fromSnapshot(msg.state);
+      }
       ladderCenter = null;
       $("trading").classList.remove("hidden");
       $("spectating").textContent = seated ? "" : "watching: you join the next round";
       render();
       break;
     case "live":
-      if (msg.round === roundId && seat) { apply(seat, msg.m); scheduleRender(); }
+      if (msg.round !== roundId) break;
+      if (msg.asset && seats) {
+        if (seats[msg.asset]) { apply(seats[msg.asset], msg.m); scheduleRender(); }
+      } else if (seat) { apply(seat, msg.m); scheduleRender(); }
       break;
     case "round_ended":
       showResults(msg.round, msg.results);
       roundId = null;
-      seat = null;
+      seat = seats = asset = null;
       $("trading").classList.add("hidden");
       $("lockstep").classList.add("hidden");
       $("challenge").classList.add("hidden");
@@ -464,20 +476,65 @@ function fmt(x, digits = 1) {
   return (v > 0 ? "+" : "") + v.toFixed(digits);
 }
 
+function seatPnl(s) { return s.cash + (s.position - s.initialPosition) * mark(s) - s.fees; }
+
+// The assets of a round with several: a tab for each, with its price, position and P&L.
+function renderAssets() {
+  const tabs = $("asset-tabs");
+  tabs.classList.toggle("hidden", !seats);
+  $("book-asset").textContent = seats ? `: ${assetTitle(asset)}` : "";
+  if (!seats) return;
+  tabs.innerHTML = Object.entries(seats).map(([sym, s]) => {
+    const p = seatPnl(s);
+    const mid = mark(s);
+    return `<button class="asset-tab ${sym === asset ? "primary" : ""}" data-asset="${esc(sym)}">` +
+      `<strong>${esc(assetTitle(sym))}</strong> <span class="num">${mid ? "$" + px(mid) : "–"}</span>` +
+      `<span class="dim"> · ${s.position > 0 ? "+" : ""}${s.position} lots · </span>` +
+      `<span class="${p > 0 ? "pos" : p < 0 ? "neg" : ""}">${usd(p, true)}</span></button>`;
+  }).join("");
+  for (const b of tabs.querySelectorAll("button")) {
+    b.onclick = () => {
+      if (!seats || !seats[b.dataset.asset]) return;
+      asset = b.dataset.asset;
+      seat = seats[asset];
+      ladderCenter = null;
+      $("price").value = "";
+      render();
+    };
+  }
+}
+
+function assetTitle(sym) {
+  const names = game && game.current && game.current.config.assets;
+  return (names && names[sym]) || sym;
+}
+
+// An order request, for the asset shown in a round with several.
+function order(msg) { send(seats ? { ...msg, asset } : msg); }
+
 function render() {
   const s = seat;
   if (!s) return;
-  const pnl = s.cash + (s.position - s.initialPosition) * mark(s) - s.fees;
+  renderAssets();
+  const pnl = seats ? Object.values(seats).reduce((a, x) => a + seatPnl(x), 0) : seatPnl(s);
   const equity = s.balance + pnl;
-  const power = mark(s) > 0 ? Math.max(0, Math.floor(equity / mark(s) + 1e-9)) : 0;
+  // In a round with several assets, what the others tie up of the bankroll (arena_kit.money).
+  const others = seats ? Object.values(seats).filter((x) => x !== s).reduce((a, x) => {
+    const open = (side) => [...x.orders.values()].filter((o) => o.side === side).reduce((n, o) => n + o.leaves, 0);
+    return a + Math.max(Math.abs(x.position + open("buy")), Math.abs(x.position - open("sell"))) * mark(x);
+  }, 0) : 0;
+  const power = mark(s) > 0 ? Math.max(0, Math.floor((equity - others) / mark(s) + 1e-9)) : 0;
+  $("position-label").textContent = seats ? `${assetTitle(asset)} held (lots)` : "Position (lots)";
   $("position").textContent = s.position;
   $("pnl").textContent = usd(pnl, true);
   $("pnl").className = `v ${pnl > 0 ? "pos" : pnl < 0 ? "neg" : ""}`;
   $("cash").textContent = usd(equity);
   $("fees").textContent = usd(s.fees);
   $("limits").textContent = seated
-    ? `Started the round with ${usd(s.balance)}. Buying power: ${Math.min(power, s.maxPosition)} lots either way ` +
-      `(most ${s.maxPosition}), ${s.maxOrder} an order. P&L values your position at the middle of the market.`
+    ? `Started the round with ${usd(s.balance)}${seats ? ", one bankroll for every asset" : ""}. ` +
+      `Buying power${seats ? ` in ${assetTitle(asset)}, after what the others tie up` : ""}: ` +
+      `${Math.min(power, s.maxPosition)} lots either way (most ${s.maxPosition}), ${s.maxOrder} an order. ` +
+      `P&L values ${seats ? "positions" : "your position"} at the middle of the market.`
     : "";
   const t = s.time / SEC, d = s.duration / SEC;
   $("clock-text").textContent = s.ended ? "closed" : s.started
@@ -631,7 +688,7 @@ function renderChart(s) {
   ctx.setLineDash([]);
   // The seat's own fills: a triangle up for each buy, down for each sell. The bot this tab runs
   // has its fills drawn hollow.
-  for (const [t, side, p] of botFills(roundId).filter((f) => f[0] / SEC >= t0)) {
+  for (const [t, side, p] of botFills(roundId, asset).filter((f) => f[0] / SEC >= t0)) {
     const cx = x(t / SEC), cy = y(p), r = 5;
     ctx.strokeStyle = color(side === "buy" ? "--bid" : "--ask");
     ctx.lineWidth = 1.5;
@@ -724,7 +781,7 @@ $("ladder").addEventListener("pointerdown", (e) => {
   const side = td.dataset.side;
   if (td.classList.contains("mine")) {
     for (const o of seat.orders.values()) {
-      if (o.side === side && o.price === price) send({ type: "cancel", id: o.id });
+      if (o.side === side && o.price === price) order({ type: "cancel", id: o.id });
     }
   } else if (td.classList.contains("bidq") || td.classList.contains("askq")) {
     limit(side, price);
@@ -741,7 +798,7 @@ function renderOrders(s) {
 $("orders").addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
   const id = e.target.dataset && e.target.dataset.id;
-  if (id) send({ type: "cancel", id: parseInt(id, 10) });
+  if (id) order({ type: "cancel", id: parseInt(id, 10) });
 });
 
 function qty() { return parseInt($("qty").value, 10); }
@@ -749,13 +806,13 @@ function qty() { return parseInt($("qty").value, 10); }
 function limit(side, price) {
   $("order-error").textContent = "";
   if (!(qty() > 0) || !(price > 0)) { $("order-error").textContent = "a positive quantity and price"; return; }
-  send({ type: "new", side, order_type: "limit", price, quantity: qty() });
+  order({ type: "new", side, order_type: "limit", price, quantity: qty() });
 }
 
 function market(side) {
   $("order-error").textContent = "";
   if (!(qty() > 0)) { $("order-error").textContent = "a positive quantity"; return; }
-  send({ type: "new", side, order_type: "market", quantity: qty() });
+  order({ type: "new", side, order_type: "market", quantity: qty() });
 }
 
 // The ticket's price is in dollars; orders are in ticks, cents.
@@ -764,7 +821,7 @@ $("buy-limit").onclick = () => limit("buy", ticketPrice());
 $("sell-limit").onclick = () => limit("sell", ticketPrice());
 $("buy-market").onclick = () => market("buy");
 $("sell-market").onclick = () => market("sell");
-$("cancel-all").onclick = () => send({ type: "cancel_all" });
+$("cancel-all").onclick = () => order({ type: "cancel_all" });
 
 // Results
 

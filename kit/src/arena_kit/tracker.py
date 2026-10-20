@@ -9,6 +9,7 @@ from collections import deque
 from typing import Any
 
 from .bot import Fill, State, Trade
+from . import money
 from .money import DEFAULT_BANKROLL
 
 FEE_UNITS = 1000  # fees and scores are sent in thousandths of a tick-lot
@@ -128,6 +129,16 @@ class SeatTracker:
     def _note_mid(self) -> None:
         if self.bids and self.asks:
             self.mids[self.time // MID_STEP] = (self.bids[0][0] + self.asks[0][0]) / 2
+
+    def committed(self) -> float:
+        """What this seat's position and open orders tie up of its bankroll (arena_kit.money),
+        for the other assets of a round with several."""
+        live = [*self.orders.values(), *self.pending.values()]
+        open_lots = {side: sum(o.get("leaves", o.get("quantity", 0)) for o in live
+                               if o["side"] == side) for side in ("buy", "sell")}
+        s = self.state()
+        at = money.mark(s.bid and s.bid[0], s.ask and s.ask[0], s.last_trade, s.reference_price)
+        return money.committed(self.position, open_lots["buy"], open_lots["sell"], at)
 
     def my_side(self, side: str) -> list[dict[str, Any]]:
         return [o for o in self.orders.values() if o["side"] == side and o["leaves"] > 0]

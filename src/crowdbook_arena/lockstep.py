@@ -30,7 +30,8 @@ from typing import Any, Awaitable, Callable
 
 from arena_kit.bot import News, Quote
 from arena_kit.money import DEFAULT_BANKROLL
-from arena_kit.stepped import SteppedMarket
+from arena_kit.bot import quotes_from_json
+from arena_kit.stepped import SteppedMarket, SteppedPortfolio
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ RECONNECT_S = 5.0  # how long a bot that has just gone is waited for, at most
 @dataclass
 class LockstepSeat:
     player_id: int
-    market: SteppedMarket
+    market: SteppedMarket | SteppedPortfolio
     turn: int = 0
     timeouts: int = 0       # turns it did not answer in time
     absent: int = 0         # turns it had no connection for
@@ -56,7 +57,8 @@ class LockstepSeat:
 
 
 class LockstepRound:
-    def __init__(self, *, round_id: int, scenario: str, seed: int, player_ids: list[int],
+    def __init__(self, *, round_id: int, scenario: str | dict[str, str], seed: int,
+                 player_ids: list[int],
                  timeout_ms: int, send: Send, connected: Callable[[int], bool],
                  news: list[News] | tuple = (),
                  balances: dict[int, float] | None = None,
@@ -65,9 +67,14 @@ class LockstepRound:
         self.round_id = round_id
         self.seed = seed
         self.timeout = timeout_ms / 1000
-        self.seats = {pid: LockstepSeat(pid, SteppedMarket(
-                          scenario, seed, news, (balances or {}).get(pid, DEFAULT_BANKROLL)))
-                      for pid in player_ids}
+
+        def market(pid: int) -> SteppedMarket | SteppedPortfolio:
+            bankroll = (balances or {}).get(pid, DEFAULT_BANKROLL)
+            if isinstance(scenario, dict):  # several linked assets
+                return SteppedPortfolio(scenario, seed, bankroll)
+            return SteppedMarket(scenario, seed, news, bankroll)
+
+        self.seats = {pid: LockstepSeat(pid, market(pid)) for pid in player_ids}
         self.duration = max(s.market.state().time_left + s.market.state().time
                             for s in self.seats.values())
         self.second = 1        # seats may be shown moments before this simulated second
@@ -147,6 +154,8 @@ class LockstepRound:
         finally:
             seat.answer = None
         try:
+            if isinstance(seat.market, SteppedPortfolio):
+                return quotes_from_json(answer, seat.market.symbols)
             return Quote.from_json(answer)
         except ValueError:
             seat.invalid += 1
@@ -190,12 +199,19 @@ class LockstepRound:
             await asyncio.gather(*(s.task for s in self.seats.values() if s.task))
             for pid, seat in self.seats.items():
                 try:
-                    s = seat.market.state()
-                    scores[pid] = (seat.market.score, {
-                        "ended": seat.market.done, "turns": seat.turn,
+                    m = seat.market
+                    if isinstance(m, SteppedPortfolio):
+                        held = m.positions
+                        position, fees = sum(held.values()), sum(
+                            a.fees for a in m.state().assets.values())
+                    else:
+                        held, s = None, m.state()
+                        position, fees = s.position, s.fees
+                    scores[pid] = (m.score, {
+                        "ended": m.done, "turns": seat.turn,
                         "timeouts": seat.timeouts, "absent": seat.absent,
-                        "invalid": seat.invalid, "position": s.position, "fees": s.fees,
-                        "seed": self.seed})
+                        "invalid": seat.invalid, "position": position, "fees": fees,
+                        "seed": self.seed, **({"positions": held} if held else {})})
                 except Exception:
                     log.exception("lockstep round %s: no score for seat %s", self.round_id, pid)
                     scores[pid] = (0.0, {"ended": False, "error": True})

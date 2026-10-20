@@ -100,12 +100,18 @@ class LiveRound:
                  watch: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
                  news: list[News] | tuple = (),
                  balances: dict[int, float] | None = None,
-                 announce: Callable[[dict[str, Any]], Awaitable[None]] | None = None):
+                 announce: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+                 asset: str | None = None,
+                 account: Callable[[int, str], tuple[float, float]] | None = None):
         self.round_id = round_id
+        # In a round with several assets: this market's asset, and what the seat's other assets
+        # add to its equity and tie up of its bankroll (MultiLiveRound.account).
+        self.asset = asset
+        self._account = account
         self.seed = seed
         self.duration_s = duration_s
         self.speed = speed
-        self.dir = Path(work_dir) / f"round-{round_id}"
+        self.dir = Path(work_dir) / (f"round-{round_id}" + (f"-{asset}" if asset else ""))
         self.scenario = scenario
         self.crowdbook = crowdbook
         self.rate_limit = rate_limit
@@ -196,10 +202,11 @@ class LiveRound:
                 msg = json.loads(line)
                 seat.tracker.apply(msg)
                 await self._send(seat.player_id, {"type": "live", "round": self.round_id,
-                                                  "m": msg})
+                                                  "m": msg, **self._tag})
                 first = seat is next(iter(self.seats.values()))
                 if self._watch_feed and first and msg.get("type") in _PUBLIC:
-                    await self._watch_feed({"type": "live", "round": self.round_id, "m": msg})
+                    await self._watch_feed({"type": "live", "round": self.round_id, "m": msg,
+                                            **self._tag})
                 if first:
                     await self._publish_news(seat.tracker.time)
                 if msg.get("type") == "end":
@@ -214,6 +221,10 @@ class LiveRound:
                 seat.writer.close()
             if all(s.task is None or s.task.done() or s is seat for s in self.seats.values()):
                 await self._finish()
+
+    @property
+    def _tag(self) -> dict[str, Any]:
+        return {"asset": self.asset} if self.asset else {}
 
     async def _finish(self) -> None:
         if self._ended:
@@ -294,6 +305,9 @@ class LiveRound:
                         for oid, o in [*t.orders.items(), *t.pending.items()]
                         if o["side"] == side and oid != msg.get("id"))
         state = t.state()
+        if self._account and self.asset:
+            extra, others = self._account(seat.player_id, self.asset)
+            state.balance += extra - others  # the bankroll's equity, less what the rest ties up
         room = money.room(side, state.position, open_lots, state.equity, price)
         if qty > room:
             if money.max_lots(state.equity, price) == 0 and (
@@ -383,3 +397,104 @@ def _port(line: str) -> int | None:
 
     m = re.search(r"serving on [^\s:]+:(\d+)", line)
     return int(m.group(1)) if m else None
+
+
+class MultiLiveRound:
+    """A live round with several linked assets: one LiveRound, and one gateway, for each asset,
+    with the same seats in each, and one bankroll behind them all."""
+
+    def __init__(self, *, round_id: int, scenarios: dict[str, str],
+                 on_end: Callable[[dict[int, tuple[float, dict[str, Any]]]], Awaitable[None]],
+                 balances: dict[int, float] | None = None, **common: Any):
+        self.round_id = round_id
+        self.balances = dict(balances or {})
+        self._on_end = on_end
+        self._scores: dict[str, dict[int, tuple[float, dict[str, Any]]]] = {}
+        self.legs = {
+            sym: LiveRound(round_id=round_id, scenario=text, asset=sym, account=self.account,
+                           balances=balances, on_end=self._leg_ended(sym), **common)
+            for sym, text in scenarios.items()}
+        self.published: list[dict[str, Any]] = []
+
+    def account(self, player_id: int, asset: str) -> tuple[float, float]:
+        """What the player's other assets add to their equity, and tie up of their bankroll."""
+        extra = others = 0.0
+        for sym, leg in self.legs.items():
+            seat = leg.seats.get(player_id)
+            if sym == asset or seat is None or seat.tracker is None:
+                continue
+            state = seat.tracker.state()
+            extra += state.equity - state.balance
+            others += seat.tracker.committed()
+        return extra, others
+
+    def _leg_ended(self, sym: str):
+        async def ended(scores: dict[int, tuple[float, dict[str, Any]]]) -> None:
+            self._scores[sym] = scores
+            if len(self._scores) == len(self.legs):
+                await self._on_end(self._totals())
+        return ended
+
+    def _totals(self) -> dict[int, tuple[float, dict[str, Any]]]:
+        out: dict[int, tuple[float, dict[str, Any]]] = {}
+        for sym, scores in self._scores.items():
+            for pid, (score, d) in scores.items():
+                total, details = out.get(pid, (0.0, {"ended": True, "positions": {}, "fees": 0.0,
+                                                     "traded": 0, "position": 0}))
+                details["ended"] = details["ended"] and d.get("ended", False)
+                details["positions"][sym] = d.get("position", 0)
+                details["position"] += d.get("position", 0)
+                details["fees"] += d.get("fees", 0.0)
+                details["traded"] += d.get("traded", 0)
+                out[pid] = (total + score, details)
+        return out
+
+    @property
+    def seats(self) -> dict[int, Seat]:
+        return next(iter(self.legs.values())).seats
+
+    async def start(self) -> None:
+        started = []
+        try:
+            for leg in self.legs.values():
+                await leg.start()
+                started.append(leg)
+        except BaseException:
+            for leg in started:
+                await leg.abort()
+            raise
+
+    async def request(self, player_id: int, msg: dict[str, Any]) -> None:
+        if not isinstance(msg, dict):
+            raise RequestError("requests are JSON objects")
+        msg = dict(msg)
+        asset = msg.pop("asset", None)
+        if msg.get("type") == "cancel_all" and asset is None:
+            await self.cancel_all(player_id)
+            return
+        leg = self.legs.get(asset) if isinstance(asset, str) else None
+        if leg is None:
+            raise RequestError(f"asset: one of {', '.join(self.legs)}")
+        await leg.request(player_id, msg)
+
+    async def cancel_all(self, player_id: int) -> None:
+        for leg in self.legs.values():
+            await leg.cancel_all(player_id)
+
+    def snapshot(self, player_id: int) -> dict[str, Any] | None:
+        snaps = {sym: leg.snapshot(player_id) for sym, leg in self.legs.items()}
+        return None if any(v is None for v in snaps.values()) else {"assets": snaps}
+
+    def any_snapshot(self) -> dict[str, Any] | None:
+        snaps = {sym: leg.any_snapshot() for sym, leg in self.legs.items()}
+        return None if any(v is None for v in snaps.values()) else {"assets": snaps}
+
+    async def stop(self) -> None:
+        await asyncio.gather(*(leg.stop() for leg in self.legs.values()))
+
+    async def abort(self) -> None:
+        for leg in self.legs.values():
+            await leg.abort()
+
+    async def wait(self) -> None:
+        await asyncio.gather(*(leg.wait() for leg in self.legs.values()))

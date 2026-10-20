@@ -101,3 +101,6 @@ select, input { max-width: 100%; }
 /* Empty states, without adding rows that code counts. */
 #orders:empty::before { content: "No open orders."; display: block; padding: 4px 8px; color: var(--dim); }
 #tape:empty::before { content: "No trades yet."; display: block; padding: 4px 8px; color: var(--dim); font-family: system-ui, sans-serif; }
+.asset-tabs { margin: 0; }
+.asset-tab { display: inline-flex; gap: 6px; align-items: baseline; padding: 8px 12px; }
+.asset-tab.primary .dim { color: #dfe8ff; }

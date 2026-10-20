@@ -312,3 +312,44 @@ def test_the_briefing_fits_and_the_host_can_start_the_market(server, width):
         a.screenshot(path=str(SHOTS / f"briefing-{width}.png"), full_page=True)
         browser.close()
     assert errors == []
+
+
+def test_a_pair_round_in_the_browser(server):
+    errors = []
+    game = server.new_game("alice")
+    code = game["code"]
+    with playwright.sync_playwright() as p:
+        browser = p.chromium.launch()
+        a = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
+        a.on("pageerror", lambda e: errors.append(str(e)))
+        a.goto(server.url)
+        a.evaluate(f"sessionStorage.setItem('arena:{code}', '{game['token']}')")
+        a.goto(f"{server.url}/g/{code}")
+        a.wait_for_selector("#host-controls:not(.hidden)")
+        assert a.inner_text("#market option[value='pair']") == "Driftwood & Lanterns"
+        a.select_option("#market", "pair")
+        a.fill("#duration", "30")
+        a.fill("#speed", "3")
+        a.click("#start-round")
+        a.wait_for_selector("#ready-gate:not(.hidden)")
+        assert "Lanterns: carved from driftwood" in a.inner_text("#ready-briefing")
+        a.click("#ready-button")
+        a.wait_for_selector("#asset-tabs:not(.hidden)")
+        a.wait_for_function("document.querySelectorAll('#asset-tabs button').length === 2")
+        a.wait_for_function(
+            "document.querySelectorAll('#ladder td.bidq:not(:empty)').length > 3")
+        assert "Driftwood" in a.inner_text("#book-asset")
+        # Switch to Lanterns and buy some: the order goes to that asset's book.
+        a.click("#asset-tabs button[data-asset='LANTERN']")
+        a.wait_for_function("document.getElementById('book-asset').textContent.includes('Lanterns')")
+        a.fill("#qty", "3")
+        a.click("#buy-market")
+        a.wait_for_function("document.getElementById('position').textContent !== '0'")
+        assert "Lanterns" in a.inner_text("#position-label")
+        assert "+3 lots" in a.inner_text("#asset-tabs button[data-asset='LANTERN']")
+        a.click("#asset-tabs button[data-asset='DRIFT']")
+        a.wait_for_function("document.getElementById('position').textContent === '0'")
+        assert "one bankroll for every asset" in a.inner_text("#limits")
+        a.screenshot(path=str(SHOTS / "pair.png"))
+        browser.close()
+    assert errors == []

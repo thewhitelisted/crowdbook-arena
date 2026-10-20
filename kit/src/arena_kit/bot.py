@@ -172,6 +172,88 @@ class State:
         return cls(**d)
 
 
+@dataclass
+class Portfolio:
+    """What a bot sees at a turn of a round with several linked assets (a pair, a basket): each
+    asset's `State`, by symbol, and the one bankroll they share. A bot answers with a dict of
+    `Quote`s by symbol; an asset left out keeps its quotes as they are.
+
+    Every asset's State has the round's starting balance in `balance`, and its own P&L only in
+    `equity`: the portfolio's `equity` counts them all, and `room` is the buying power the rules
+    give on one asset, given what the others commit (arena_kit.money)."""
+
+    time: int
+    time_left: int
+    assets: dict[str, State]
+    balance: float = DEFAULT_BANKROLL  # tick-lots the bankroll started the round with
+
+    @property
+    def equity(self) -> float:
+        return self.balance + sum(s.equity - s.balance for s in self.assets.values())
+
+    @property
+    def news(self) -> list[News]:
+        return [n for s in self.assets.values() for n in s.news]
+
+    def mark(self, symbol: str) -> float:
+        s = self.assets[symbol]
+        return money.mark(s.bid and s.bid[0], s.ask and s.ask[0], s.last_trade, s.reference_price)
+
+    def committed(self, symbol: str) -> float:
+        """What this asset's position and resting quotes tie up of the bankroll."""
+        s = self.assets[symbol]
+        return money.committed(s.position, s.my_bid[1] if s.my_bid else 0,
+                               s.my_ask[1] if s.my_ask else 0, self.mark(symbol))
+
+    def room(self, symbol: str, side: str, price: float, open_lots: int = 0) -> int:
+        """How many more lots of this asset may be bid ("buy") or offered ("sell") at `price`."""
+        others = sum(self.committed(o) for o in self.assets if o != symbol)
+        s = self.assets[symbol]
+        return money.room(side, s.position, open_lots, self.equity - others, price)
+
+    def to_json(self) -> dict[str, Any]:
+        return {"time": self.time, "time_left": self.time_left, "balance": self.balance,
+                "assets": {k: v.to_json() for k, v in self.assets.items()}}
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "Portfolio":
+        return cls(time=data["time"], time_left=data["time_left"], balance=data["balance"],
+                   assets={k: State.from_json(v) for k, v in data["assets"].items()})
+
+
+def quotes_from_json(data: Any, symbols: list[str] | tuple[str, ...]) -> dict[str, "Quote"]:
+    """A multi-asset answer, {"quotes": {symbol: quote}}, checked: raises ValueError for an
+    unknown symbol or a malformed quote. Symbols left out keep their quotes."""
+    if not isinstance(data, dict) or not isinstance(data.get("quotes"), dict):
+        raise ValueError('a multi-asset answer is {"quotes": {symbol: quote}}')
+    unknown = set(data) - {"type", "turn", "quotes"}
+    if unknown:
+        raise ValueError(f"unknown fields: {', '.join(sorted(unknown))}")
+    out = {}
+    for symbol, q in data["quotes"].items():
+        if symbol not in symbols:
+            raise ValueError(f"unknown asset {symbol!r}")
+        out[symbol] = Quote.from_json(q)
+    return out
+
+
+def checked_quotes(answer: Any, symbols: tuple[str, ...]) -> dict[str, Quote] | None:
+    """A bot's answer in a round with several assets: None, or a dict of Quotes by symbol,
+    checked as a single Quote is. Raises ValueError for anything else."""
+    if answer is None:
+        return None
+    if not isinstance(answer, dict):
+        raise ValueError("in a round with several assets, answer with a dict of Quotes by "
+                         "symbol")
+    out = {}
+    for sym, q in answer.items():
+        if sym not in symbols:
+            raise ValueError(f"unknown asset {sym!r}; the assets are {', '.join(symbols)}")
+        if q is not None:
+            out[sym] = q.checked()
+    return out
+
+
 class Bot:
     """Subclass this and override `on_turn`."""
 
@@ -179,7 +261,9 @@ class Bot:
         """Called once before the first turn, with the round's market and limits."""
 
     def on_turn(self, state: State) -> Quote | None:
-        """The quotes to rest and what to take now; None leaves everything as it is."""
+        """The quotes to rest and what to take now; None leaves everything as it is. In a
+        round with several assets, `state` is a Portfolio, and the answer a dict of Quotes by
+        symbol."""
         return None
 
     def on_end(self, result: dict[str, Any]) -> None:
