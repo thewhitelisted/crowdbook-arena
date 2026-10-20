@@ -183,7 +183,11 @@ Public market kinds come from the kit (`arena-kit markets`):
 | `basket` | Fruit Crate | Coconuts, Mangoes, and a Fruit Crate holding one of each, which trades near its contents' worth, give or take a premium that comes and goes. |
 
 Every kind has a pack of well-informed traders who keep the price near the fair value and pick off
-stale quotes, so quoting blindly costs money; a careful maker can still profit in the calmer ones.
+stale quotes, and market makers who quote deep and shade their quotes with the order flow, so
+neither quoting blindly nor simply following the flow is a sure thing. In Pearls, funds also work
+big orders one way for reasons of their own: runs that look like news but are not. Careful
+quoting, and reading the news, still pay (`tests/test_yardstick.py` keeps a flow-following
+maker honest).
 
 Screens show the asset's name; bots and `arena-kit test --market` use the kind.
 

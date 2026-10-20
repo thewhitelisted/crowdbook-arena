@@ -171,23 +171,27 @@ account = {{ max_position = 200, max_order_quantity = 10 }}
 type = "market_maker"
 name = "maker"
 intensity = 1.0
-quote_size = 5
+quote_size = {maker_size}
 max_inventory = 100
 requote_interval = "250ms"
+flow_impact = {maker_flow}
+flow_memory = "2s"
 post_only = true
 latency = {{ to_exchange = "20us", from_exchange = "20us" }}
-account = {{ max_position = 110, max_order_quantity = 10 }}
+account = {{ max_position = 110, max_order_quantity = {maker_order} }}
 
 [[agents]]
 type = "market_maker"
 name = "slow maker"
 intensity = 0.5
-quote_size = 10
+quote_size = {slow_size}
 max_inventory = 100
 requote_interval = "1s"
+flow_impact = {maker_flow}
+flow_memory = "2s"
 post_only = true
 latency = {{ to_exchange = "200us", from_exchange = "200us" }}
-account = {{ max_position = 110, max_order_quantity = 10 }}
+account = {{ max_position = 110, max_order_quantity = {maker_order} }}
 
 [[agents]]
 type = "momentum"
@@ -234,11 +238,33 @@ account = {{ max_position = 203, max_order_quantity = 3 }}
 """
 
 
+# Funds that work large orders, one way, in slices over a minute or so, for reasons of their own:
+# runs of buying or selling that say nothing of the fair value, however much they look like it.
+_FUNDS = """
+[[agents]]
+type = "execution"
+name = "funds"
+count = {count}
+style = "twap"
+min_parent = 200
+max_parent = 600
+parent_tail = 1.5
+child_size = 15
+interval = "1s"
+pause = "10s"
+interval_spread = 0.5
+size_spread = 0.5
+latency = {{ to_exchange = "300us", from_exchange = "300us" }}
+account = {{ max_position = 100000, max_order_quantity = 15 }}
+"""
+
+
 def _template(fundamental: str, *, noise: int = 60, market_rate: float = 0.05, trend: int = 5,
               trend_size: int = 3, trend_max: int = 30, experts: int = 2,
               expert_interval: str = "2s", expert_size: int = 3, expert_threshold: float = 2.0,
               expert_max: int = 300, expert_lag: str = "1s", max_position: int = 100,
-              max_order: int = 20, reference: int = 10000) -> str:
+              max_order: int = 20, reference: int = 10000, maker_size: int = 5,
+              slow_size: int = 10, maker_flow: float = 0.0, funds: int = 0) -> str:
     head = f'seed = {{seed}}\nduration = "{{duration}}"\nreference_price = {reference}\n'
     exchange = "\n[exchange]\ndepth_levels = 10\nmaker_fee = -0.1\ntaker_fee = 0.2\n"
     seat = _SEAT.format(max_position=max_position, max_order=max_order)
@@ -248,7 +274,10 @@ def _template(fundamental: str, *, noise: int = 60, market_rate: float = 0.05, t
                           expert_interval=expert_interval, expert_size=expert_size,
                           expert_threshold=expert_threshold, expert_max=expert_max,
                           expert_account=expert_max + expert_size,
-                          expert_lag=expert_lag)
+                          expert_lag=expert_lag, maker_size=maker_size, slow_size=slow_size,
+                          maker_flow=maker_flow, maker_order=max(10, maker_size, slow_size))
+    if funds:
+        crowd += _FUNDS.format(count=funds)
     # The seat and crowd are formatted now; only {seed} and {duration} are left for the round.
     seat = seat.replace("{", "{{").replace("}", "}}")
     crowd = crowd.replace("{", "{{").replace("}", "}}")
@@ -281,15 +310,22 @@ def _brief(asset: str, flavour: str, behaviour: str, crowd: str) -> str:
     )
 
 
-_CROWD_TEXT = ("market makers quoting both sides; a crowd of small traders who buy and sell at "
-               "random; {trend}; a pack of well-informed traders who learn the fair value "
-               "moments before anyone else and trade hard on it, so quotes left where the price "
-               "used to be get picked off; and a slower crowd that catches up later.")
+_CROWD_TEXT = ("market makers who quote deep on both sides and shade their quotes with the order "
+               "flow, so the price soon takes in what the flow says; a crowd of small traders "
+               "who buy and sell at random; {trend}; a pack of well-informed traders who learn "
+               "the fair value moments before anyone else and trade hard on it, so quotes left "
+               "where the price used to be get picked off;{extra} and a slower crowd that "
+               "catches up later.")
 
-# The well-informed traders every public kind has: enough of them, trading often enough, to keep
-# the price near the fair value, and to make careless quoting costly.
+# The crowd every public kind has: well-informed traders, enough of them and trading often enough
+# to keep the price near the fair value and make careless quoting costly; and market makers who
+# quote deep and lean their quotes with the order flow, so that the price takes in what the flow
+# says at once, and following the flow is no free lunch.
 _INFORMED = dict(experts=8, expert_interval="1s", expert_size=10, expert_threshold=1.0,
-                 expert_max=5000, market_rate=0.02)
+                 expert_max=5000, market_rate=0.02, maker_size=20, slow_size=30, maker_flow=1.0)
+# Pearls and Coral move faster, so their informed traders trade faster, and their makers lean less
+# on the flow, which with fast informed flow would carry prices away from the fair value.
+_FAST_INFORMED = {**_INFORMED, "expert_interval": "500ms", "expert_size": 20, "maker_flow": 0.25}
 
 
 CALM = TemplateKind(
@@ -303,7 +339,7 @@ CALM = TemplateKind(
                  "a calm asset. Its fair value is always on the move, a little at a time and "
                  "without sudden jumps, and there is no news. Over a few minutes those small moves "
                  "add up.",
-                 _CROWD_TEXT.format(trend="a few trend followers")),
+                 _CROWD_TEXT.format(trend="a few trend followers", extra="")),
 )
 
 @dataclass(frozen=True)
@@ -372,19 +408,23 @@ NEWS = PathKind(
     title="Pearls",
     description=("Quiet stretches, then sharp jumps when news breaks. The well-informed hear "
                  "first, the crowd later; players get headlines too, when the host chooses."),
-    template=_template('\n[fundamental]\npath = [{path}]\n', expert_lag="2s", **_INFORMED),
+    template=_template('\n[fundamental]\npath = [{path}]\n', expert_lag="2s",
+                       **{**_FAST_INFORMED, "expert_size": 15, "funds": 8}),
     volatility=0.5,
     jump_rate=1 / 60,
     jump_size=50.0,
     fallback=_template(
         '\n[fundamental]\nvolatility = 0.5\nstep = "250ms"\njump_rate = 0.0167\njump_size = 50.0\n',
-        expert_lag="2s", **_INFORMED),
+        expert_lag="2s", **{**_FAST_INFORMED, "expert_size": 15, "funds": 8}),
     brief=_brief("Pearls", "scarce and prized; what they are worth turns on word from the "
                  "divers.",
                  "quiet stretches, then sharp jumps when news breaks, now and then, up or down "
                  "and by enough to matter. The well-informed trade on the news first; the crowd "
                  "follows. Quotes left in the book when news breaks are what the jump hits.",
-                 _CROWD_TEXT.format(trend="a few trend followers")),
+                 _CROWD_TEXT.format(
+                     trend="a few trend followers",
+                     extra=" funds that work big orders one way for a minute or so, for "
+                           "reasons of their own, whose runs look like news but are not;")),
 )
 
 TRENDING = PathKind(
@@ -393,20 +433,21 @@ TRENDING = PathKind(
     description=("Volatile and trend-prone: its fair value runs one way for a while, then turns, "
                  "and trend followers chase every move, so prices overshoot and come back."),
     template=_template('\n[fundamental]\npath = [{path}]\n', trend=15, expert_lag="500ms",
-                       **{**_INFORMED, "market_rate": 0.04}),
+                       **{**_FAST_INFORMED, "market_rate": 0.04}),
     volatility=3.0,
     jump_rate=0.0,
-    trend_sd=1.5,
-    trend_s=30.0,
+    trend_sd=1.0,
+    trend_s=15.0,
     news=False,
     fallback=_template('\n[fundamental]\nvolatility = 3.0\nstep = "250ms"\n', trend=15,
-                       expert_lag="500ms", **{**_INFORMED, "market_rate": 0.04}),
+                       expert_lag="500ms", **{**_FAST_INFORMED, "market_rate": 0.04}),
     brief=_brief("Coral", "the island's favourite building stone, its price swinging with "
                  "the mood of the builders.",
                  "volatile and trend-prone. Its fair value moves fast, and runs one way for a "
                  "while before it turns; trend followers chase every move, so prices overshoot "
                  "and come back. No news.",
-                 _CROWD_TEXT.format(trend="a pack of trend followers who chase every move")),
+                 _CROWD_TEXT.format(trend="a pack of trend followers who chase every move",
+                                    extra="")),
 )
 
 # Rounds with several linked assets: each asset trades in its own market, with its own book, and
