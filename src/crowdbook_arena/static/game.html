@@ -62,9 +62,17 @@
       <code id="bot-command"></code></p>
   </section>
 
-  <section class="panel hidden" id="briefing-panel">
-    <details open><summary><h2 style="display:inline">Briefing <span class="dim" id="briefing-title"></span></h2></summary>
-      <div class="briefing" id="briefing"></div></details>
+  <section class="panel hidden" id="ready-gate">
+    <h2>Briefing <span class="dim" id="ready-title"></span></h2>
+    <div class="briefing" id="ready-briefing"></div>
+    <p class="dim" style="font-size:12px">The market opens when everyone here has read the briefing.
+      Players who are not connected are not waited for.</p>
+    <ul class="players" id="ready-players"></ul>
+    <div class="row">
+      <button class="primary" id="ready-button">I'm ready</button>
+      <button id="begin-now" class="hidden">Start now</button>
+      <span class="dim" id="ready-status"></span>
+    </div>
   </section>
 
   <section class="hidden" id="trading">
@@ -127,6 +135,11 @@
         </div>
       </div>
     </div>
+  </section>
+
+  <section class="panel hidden" id="briefing-panel">
+    <details open><summary class="briefing-summary">Briefing <span id="briefing-title"></span></summary>
+      <div class="briefing compact" id="briefing"></div></details>
   </section>
 
   <section class="panel hidden" id="challenge">

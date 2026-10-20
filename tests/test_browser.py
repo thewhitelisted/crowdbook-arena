@@ -49,7 +49,16 @@ def test_two_tabs_play_a_live_round(server):
         a.fill("#duration", "40")
         a.fill("#speed", "4")
         a.click("#start-round")
+        # The briefing first: the market opens once both have read it.
+        b.wait_for_selector("#ready-gate:not(.hidden)")
+        assert b.inner_text("#ready-briefing").startswith("Sea Salt:")
+        b.click("#ready-button")
+        a.wait_for_function("document.getElementById('ready-players').textContent.includes('ready')")
+        assert a.is_hidden("#trading")
+        a.click("#ready-button")
         b.wait_for_selector("#trading:not(.hidden)")
+        assert "Sea Salt" in b.text_content("#round-title")
+        assert b.is_hidden("#ready-gate") and b.is_visible("#briefing-panel")
         b.wait_for_function(
             "document.querySelectorAll('#ladder td.bidq:not(:empty)').length > 3")
         assert "/ 0:40" in b.text_content("#clock-text")
@@ -193,6 +202,8 @@ def test_news_in_the_browser(server):
                             ".includes('the moment it happens')")
         a.fill("#speed", "4")
         a.click("#start-round")
+        a.wait_for_selector("#ready-gate:not(.hidden)")
+        a.click("#ready-button")
         a.wait_for_selector("#news-panel:not(.hidden)")
         a.wait_for_selector("#briefing-panel:not(.hidden)")
         assert a.inner_text("#briefing").startswith("calm, with headlines")
@@ -218,6 +229,7 @@ def test_the_chart_fills_its_width_early_in_a_long_round(server):
         a.fill("#duration", "3600")
         a.fill("#speed", "4")
         a.click("#start-round")
+        a.click("#ready-button")
         a.wait_for_selector("#trading:not(.hidden)")
         a.wait_for_timeout(2500)  # about ten seconds of a round an hour long
         span = a.evaluate("""() => {
@@ -240,5 +252,54 @@ def test_the_chart_fills_its_width_early_in_a_long_round(server):
         a.screenshot(path=str(SHOTS / "chart.png"))
         r = server.http.get("/static/game.js")
         assert r.headers["cache-control"] == "no-cache"
+        browser.close()
+    assert errors == []
+
+
+def _fits(page, selector):
+    """Whether an element's content fits its width: no text runs out of its box."""
+    return page.evaluate(f"""() => {{
+        const el = document.querySelector({selector!r});
+        return el.scrollWidth <= el.clientWidth + 1 && el.getBoundingClientRect().right
+            <= document.documentElement.clientWidth + 1;
+    }}""")
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_the_briefing_fits_and_the_host_can_start_the_market(server, width):
+    errors = []
+    game = server.new_game("alice")
+    code = game["code"]
+    bob = server.join(code, "bob")
+    with playwright.sync_playwright() as p:
+        browser = p.chromium.launch()
+        pages = []
+        for token in (game["token"], bob["token"]):
+            page = browser.new_context(viewport={"width": width, "height": 900}).new_page()
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.goto(server.url)
+            page.evaluate(f"sessionStorage.setItem('arena:{code}', '{token}')")
+            page.goto(f"{server.url}/g/{code}")
+            pages.append(page)
+        a, b = pages
+        a.wait_for_selector("#host-controls:not(.hidden)")
+        b.wait_for_function("document.getElementById('me').textContent.includes('bob')")
+        assert a.inner_text("#market option[value='news']") == "Pearls"
+        a.select_option("#market", "news")
+        a.fill("#speed", "4")
+        a.click("#start-round")
+        a.wait_for_selector("#ready-gate:not(.hidden)")
+        assert a.inner_text("#ready-briefing").startswith("Pearls:")
+        assert _fits(a, "#ready-briefing") and _fits(a, "#ready-gate")
+        # Bob never says he is ready; the host starts the market anyway.
+        a.click("#ready-button")
+        a.wait_for_function("document.getElementById('ready-status').textContent.includes('1')")
+        assert b.is_visible("#ready-button") and b.is_hidden("#begin-now")
+        a.click("#begin-now")
+        a.wait_for_selector("#trading:not(.hidden)")
+        b.wait_for_selector("#trading:not(.hidden)")
+        a.wait_for_selector("#briefing-panel:not(.hidden)")
+        assert _fits(a, "#briefing") and _fits(a, "#briefing-panel")
+        a.screenshot(path=str(SHOTS / f"briefing-{width}.png"), full_page=True)
         browser.close()
     assert errors == []

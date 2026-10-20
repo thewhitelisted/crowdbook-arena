@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+from dataclasses import dataclass, field
 from typing import Any
 
 from starlette.websockets import WebSocket
@@ -69,6 +70,17 @@ class Connection:
             pass
 
 
+@dataclass
+class ReadyCheck:
+    """A live round between its start and its market's: players read the briefing, and the
+    market opens once every human player still connected has said they are ready (or the host
+    starts it). Bots are ready at once: they get the briefing in on_start."""
+
+    players: list[int]                 # every seat in the round
+    humans: set[int]                   # the seats that are asked
+    ready: set[int] = field(default_factory=set)
+
+
 class GameHub:
     def __init__(self, arena: "Arena", game: dict[str, Any]):
         self.arena = arena
@@ -76,6 +88,7 @@ class GameHub:
         self.conns: dict[int, set[Connection]] = {}
         self.round: dict[str, Any] | None = None
         self.runner: LiveRound | LockstepRound | ChallengeRound | None = None
+        self.ready_check: ReadyCheck | None = None
         self.lock = asyncio.Lock()
 
     # Connections
@@ -88,7 +101,7 @@ class GameHub:
         conn.send({"type": "welcome", "player": player, "game": self.info()})
         conn.send({"type": "leaderboard", "boards": self.leaderboard()})
         runner = self.runner
-        if isinstance(runner, LiveRound) and self.round:
+        if isinstance(runner, LiveRound) and self.round and self.ready_check is None:
             snap = runner.snapshot(player["id"])
             conn.send({"type": "live_snapshot", "round": self.round["id"], "seated": snap is not None,
                        "state": snap or runner.any_snapshot()})
@@ -104,7 +117,13 @@ class GameHub:
         conns = self.conns.get(player_id, set())
         conns.discard(conn)
         await conn.close()
-        if not conns and isinstance(self.runner, LiveRound):
+        if not conns and self.ready_check is not None:
+            # Gone during the briefing: no longer waited for.
+            try:
+                await self.begin_if_ready()
+            except GameError:
+                pass
+        elif not conns and isinstance(self.runner, LiveRound):
             # No screen or bot left to watch the seat's orders: take them out of the book.
             await self.runner.cancel_all(player_id)
         elif not conns and isinstance(self.runner, LockstepRound):
@@ -141,6 +160,7 @@ class GameHub:
             # Past rounds without their briefings, which would only make every update longer.
             "rounds": [round_info(r, with_briefing=False) for r in store.rounds(self.game["id"])],
             "current": round_info(self.round) if self.round else None,
+            "ready_check": self.ready_info(),
             "markets": [{"name": k.name, "title": k.title, "description": k.description,
                          "news": has_news(k)} for k in self.arena.kinds.values()],
         }
@@ -217,7 +237,13 @@ class GameHub:
                         balances=balances,
                         on_progress=self._lockstep_progress, on_end=on_end)
                 self.round, self.runner = rnd, runner
-                await runner.start()
+                if isinstance(runner, LiveRound):
+                    # The market waits while the players read the briefing.
+                    self.ready_check = ReadyCheck(
+                        [p["id"] for p in players],
+                        {p["id"] for p in players if p["kind"] == "human"})
+                else:
+                    await runner.start()
                 await self.broadcast({"type": "round_started", "round": round_info(rnd)})
             except BaseException as e:
                 log.exception("round %s did not start", rnd["id"])
@@ -228,11 +254,82 @@ class GameHub:
                     raise
                 raise GameError(f"the round did not start: {e}", 500) from e
         if isinstance(runner, LiveRound):
-            for p in players:
-                await self.send(p["id"], {"type": "live_snapshot", "round": rnd["id"],
-                                          "seated": True, "state": runner.snapshot(p["id"])})
+            await self.begin_if_ready()  # at once if nobody needs to read the briefing
         await self.broadcast_info()
         return round_info(rnd)
+
+    # The briefing before a live round's market opens
+
+    def waiting(self) -> list[int]:
+        """The players the market still waits for: connected, asked, and not yet ready."""
+        check, online = self.ready_check, self.online()
+        if check is None:
+            return []
+        return sorted(pid for pid in check.humans if pid in online and pid not in check.ready)
+
+    def ready_info(self) -> dict[str, Any] | None:
+        check = self.ready_check
+        if check is None or self.round is None:
+            return None
+        return {"round": self.round["id"], "asked": sorted(check.humans),
+                "ready": sorted(check.ready), "waiting": self.waiting()}
+
+    async def ready(self, player: dict[str, Any]) -> None:
+        """A player has read the briefing."""
+        check = self.ready_check
+        if check is None:
+            raise RequestError("no round is waiting for its players")
+        if player["id"] in check.humans:
+            check.ready.add(player["id"])
+        try:
+            if not await self.begin_if_ready():
+                await self.broadcast_info()
+        except GameError as e:
+            raise RequestError(str(e)) from None
+
+    async def begin_now(self, host: dict[str, Any]) -> None:
+        """The host starts the market without waiting for everyone."""
+        if not host["is_host"]:
+            raise GameError("only the game's host can start the market", 403)
+        if self.ready_check is None:
+            raise GameError("no round is waiting for its players", 409)
+        await self.begin_if_ready(force=True)
+
+    async def begin_if_ready(self, force: bool = False) -> bool:
+        """Opens the market of the live round waiting for its players, if nobody is still
+        reading (or `force`); True if it opened. Raises GameError if it could not start."""
+        async with self.lock:
+            check, rnd, runner = self.ready_check, self.round, self.runner
+            if check is None or rnd is None or not isinstance(runner, LiveRound):
+                return False
+            if not force and self.waiting():
+                return False
+            self.ready_check = None
+            try:
+                await runner.start()
+            except BaseException as e:
+                log.exception("round %s did not start", rnd["id"])
+                self.round = self.runner = None
+                self.arena.store.finish_round(rnd["id"], "failed", {})
+                await self.broadcast_info()
+                if not isinstance(e, Exception):
+                    raise
+                raise GameError(f"the round did not start: {e}", 500) from e
+            for pid in check.players:
+                await self.send(pid, {"type": "live_snapshot", "round": rnd["id"],
+                                      "seated": True, "state": runner.snapshot(pid)})
+        await self.broadcast_info()
+        return True
+
+    def _cancel_ready_check(self) -> bool:
+        """Ends a live round that has not opened its market yet, as failed; True if there was
+        one."""
+        if self.ready_check is None or self.round is None:
+            return False
+        self.arena.store.finish_round(self.round["id"], "failed", {})
+        self.ready_check = None
+        self.round = self.runner = None
+        return True
 
     async def _start_challenge(self, spec: dict[str, Any], seed: int,
                                players: list[dict[str, Any]]) -> dict[str, Any]:
@@ -273,6 +370,8 @@ class GameHub:
 
     async def abort(self) -> None:
         """The server is stopping: a round under way ends without results, as failed."""
+        if self._cancel_ready_check():
+            return
         runner, rnd = self.runner, self.round
         if runner is None or rnd is None:
             return
@@ -284,7 +383,11 @@ class GameHub:
         if not host["is_host"]:
             raise GameError("only the game's host can end a round", 403)
         async with self.lock:  # never while a round is still starting
+            cancelled = self._cancel_ready_check()
             runner = self.runner
+        if cancelled:
+            await self.broadcast_info()
+            return
         if runner is None:
             raise GameError("no round is under way", 409)
         await runner.stop()
@@ -319,6 +422,11 @@ class GameHub:
                 for i, r in enumerate(rows)]
 
     async def request(self, player: dict[str, Any], msg: dict[str, Any]) -> None:
+        if isinstance(msg, dict) and msg.get("type") == "ready":
+            await self.ready(player)
+            return
+        if self.ready_check is not None:
+            raise RequestError("the market opens once everyone has read the briefing")
         runner = self.runner
         if runner is None:
             raise RequestError("no round is under way")

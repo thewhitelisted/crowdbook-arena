@@ -5,6 +5,7 @@
     GET  /api/games/{code}                                               -> the game
     POST /api/games/{code}/rounds           (host) {"kind", "market", "duration_s", "speed"}
     POST /api/games/{code}/rounds/stop      (host)
+    POST /api/games/{code}/rounds/begin     (host) opens a live round's market without waiting
     GET  /api/games/{code}/rounds/{number}                               -> a round and its results
     GET  /api/games/{code}/leaderboard                                   -> the game's leaderboards
     GET  /api/kinds/{name}/briefing?duration_s=&news=                    -> a market's briefing
@@ -101,6 +102,11 @@ def create_app(settings: Settings | None = None) -> Starlette:
         game, player = game_and_host(request)
         await arena.hub(game).stop_round(player)
         return JSONResponse({"stopped": True})
+
+    async def begin_round(request: Request) -> JSONResponse:
+        game, player = game_and_host(request)
+        await arena.hub(game).begin_now(player)
+        return JSONResponse({"begun": True})
 
     async def get_round(request: Request) -> JSONResponse:
         game = arena.game(request.path_params["code"])
@@ -205,6 +211,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
             Route("/api/games/{code}/join", join_game, methods=["POST"]),
             Route("/api/games/{code}/rounds", start_round, methods=["POST"]),
             Route("/api/games/{code}/rounds/stop", stop_round, methods=["POST"]),
+            Route("/api/games/{code}/rounds/begin", begin_round, methods=["POST"]),
             Route("/api/games/{code}/rounds/{number:int}", get_round),
             Route("/api/games/{code}/leaderboard", get_leaderboard),
             WebSocketRoute("/ws", ws_endpoint),

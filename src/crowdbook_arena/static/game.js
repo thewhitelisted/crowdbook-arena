@@ -87,7 +87,6 @@ function handle(msg) {
       break;
     case "round_started":
       $("results").classList.add("hidden");
-      showBriefing(msg.round);
       break;
     case "news":
       if (msg.round === roundId && seat) {
@@ -129,6 +128,7 @@ function handle(msg) {
       $("lockstep").classList.add("hidden");
       $("challenge").classList.add("hidden");
       $("briefing-panel").classList.add("hidden");
+      $("ready-gate").classList.add("hidden");
       clearInterval(challengeTimer);
       break;
   }
@@ -156,7 +156,7 @@ function setGame(g) {
   }
   $("start-round").classList.toggle("hidden", !!g.current);
   $("stop-round").classList.toggle("hidden", !g.current);
-  showBriefing(g.current);
+  showBriefing(g.current, g.ready_check);
   if (g.current) {
     $("round-title").textContent =
       `round ${g.current.number}: ${g.current.config.market_title || g.current.market}`;
@@ -174,14 +174,37 @@ function setGame(g) {
   }
 }
 
-// The briefing of the market round under way, while it lasts.
-function showBriefing(r) {
+// The briefing of the market round under way: before the market opens, in full, with who has
+// read it; then in a compact panel below the trading screen while the round lasts.
+function showBriefing(r, check) {
   const text = r && r.config && r.config.briefing;
-  $("briefing-panel").classList.toggle("hidden", !text);
+  const gate = !!(text && check && check.round === r.id);
+  $("ready-gate").classList.toggle("hidden", !gate);
+  $("briefing-panel").classList.toggle("hidden", !text || gate);
   if (!text) return;
-  $("briefing-title").textContent = `round ${r.number}: ${r.config.market_title || r.market}`;
+  const title = `round ${r.number}: ${r.config.market_title || r.market}`;
+  $("briefing-title").textContent = title;
+  $("ready-title").textContent = title;
   if ($("briefing").textContent !== text) $("briefing").textContent = text;
+  if ($("ready-briefing").textContent !== text) $("ready-briefing").textContent = text;
+  if (!gate) return;
+  const ready = new Set(check.ready), waiting = new Set(check.waiting);
+  const asked = game.players.filter((p) => check.asked.includes(p.id));
+  $("ready-players").innerHTML = asked.map((p) =>
+    `<li><span class="dot ${p.online ? "on" : ""}"></span>${esc(p.name)} ` +
+    `<span class="${ready.has(p.id) ? "pos" : "dim"}">${ready.has(p.id) ? "ready"
+      : waiting.has(p.id) ? "reading…" : "not connected"}</span></li>`).join("");
+  const mine = me && check.asked.includes(me.id) && !ready.has(me.id);
+  $("ready-button").classList.toggle("hidden", !mine);
+  $("begin-now").classList.toggle("hidden", !(me && me.is_host));
+  $("ready-status").textContent = check.waiting.length
+    ? `waiting for ${check.waiting.length} to read it` : "opening the market…";
 }
+$("ready-button").onclick = () => send({ type: "ready" });
+$("begin-now").onclick = async () => {
+  try { await post(`/api/games/${code}/rounds/begin`, {}, token); }
+  catch (err) { $("ready-status").textContent = err.message; }
+};
 
 function showLockstep(p) {
   if (!game || !game.current || game.current.kind !== "lockstep") return;
