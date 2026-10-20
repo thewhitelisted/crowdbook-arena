@@ -5,6 +5,9 @@ import pytest
 playwright = pytest.importorskip("playwright.sync_api")
 
 
+SHOTS = __import__("pathlib").Path(__import__("tempfile").gettempdir())
+
+
 def human_click(page, locator, hold_s=0.2):
     # The cell is redrawn every update, so it can be replaced while it is measured: try again.
     for _ in range(50):
@@ -68,6 +71,21 @@ def test_two_tabs_play_a_live_round(server):
         b.click("#buy-market")
         b.wait_for_function("document.getElementById('position').textContent !== '0'")
         assert b.locator("#tape tr").count() > 0
+        # The chart draws the price, and the buy as a green marker.
+        b.wait_for_timeout(300)
+        colours = b.evaluate("""() => {
+            const c = document.getElementById('chart');
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            let line = 0, green = 0;
+            for (let i = 0; i < d.length; i += 4) {
+                if (d[i + 3] < 200) continue;
+                if (d[i + 2] > 200 && d[i] < 120) line++;                    // the accent blue
+                if (d[i + 1] > 150 && d[i] < 100 && d[i + 2] < 160) green++; // the bid green
+            }
+            return {line, green};
+        }""")
+        assert colours["line"] > 20 and colours["green"] > 5, colours
+        b.screenshot(path=str(SHOTS / "trading.png"))
 
         # Someone who joins mid-round watches the market without a seat.
         c = ctx.new_page()

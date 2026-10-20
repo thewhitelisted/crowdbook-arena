@@ -283,6 +283,7 @@ class LiveRound:
             if seat.tracker:
                 snap = seat.tracker.snapshot()
                 return {**snap, "cash": 0, "position": 0, "fees": 0, "traded": 0, "orders": [],
+                        "my_fills": [],
                         "pending": [], "initial_cash": 0, "initial_position": 0}
         return None
 
