@@ -16,7 +16,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import websockets
 
-from .bot import Bot, Fill, Quote, State, Trade
+from .bot import Bot, Fill, News, Quote, State, Trade
 from .tracker import SeatTracker
 
 log = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ class LiveDriver:
         self.next_turn: int | None = None
         self.trades: list[Trade] = []
         self.fills: list[Fill] = []
+        self.news: list[News] = []
         self.cancelling: set[int] = set()
         self.modifying: dict[int, tuple[int, int]] = {}  # modifies sent and not yet answered
         own = [i for i in (*tracker.orders, *tracker.pending) if i < ARENA_IDS]
@@ -72,7 +73,8 @@ class LiveDriver:
 
     async def turn(self) -> None:
         state = self.t.state(self.trades, self.fills)
-        self.trades, self.fills = [], []
+        state.news = self.news
+        self.trades, self.fills, self.news = [], [], []
         try:
             quote = self.bot.on_turn(state)
             quote = quote.checked() if quote is not None else None
@@ -185,6 +187,8 @@ async def play(bot: Bot, server: str, token: str, *, rounds: int | None = None,
                     tracker.load(msg["state"])
                     driver = LiveDriver(bot, tracker, send)
                     live_round = msg["round"]
+            elif kind == "news" and driver and msg["round"] == live_round:
+                driver.news.append(News(msg["time"], msg["headline"], msg["change"]))
             elif kind == "live" and tracker and driver and msg["round"] == live_round:
                 tracker.apply(msg["m"])
                 await driver.on_message(msg["m"])

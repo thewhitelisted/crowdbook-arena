@@ -43,6 +43,12 @@
         </select></label>
         <label>Length (s) <input type="number" id="duration" value="300" min="5" step="5"></label>
         <label class="live-only">Speed <input type="number" id="speed" value="1" min="0.1" max="100" step="0.5"></label>
+        <label class="news-only hidden">News for players <select id="news-delay">
+          <option value="experts">with the experts (about 2 s late)</option>
+          <option value="instant">at once</option>
+          <option value="crowd">with the crowd (about 30 s late)</option>
+          <option value="off">none</option>
+        </select></label>
         <label class="lockstep-only hidden">Turn timeout (ms) <input type="number" id="turn-timeout" value="2000" min="50" max="60000" step="100"></label>
         <button class="primary" id="start-round">Start the round</button>
         <button id="stop-round" class="hidden">End the round now</button>
@@ -80,6 +86,10 @@
           <h2>Price <span class="dim" style="text-transform:none;letter-spacing:0">last trade each second;
             <span class="pos">▲</span> your buys, <span class="neg">▼</span> your sells</span></h2>
           <canvas id="chart" style="width:100%;height:200px;display:block"></canvas>
+        </div>
+        <div class="panel hidden" id="news-panel">
+          <h2>News</h2>
+          <div class="tape" style="max-height:120px"><table><tbody id="news"></tbody></table></div>
         </div>
         <div class="panel">
           <h2>Order</h2>

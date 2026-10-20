@@ -100,6 +100,13 @@ class Fill:
     fee: float       # tick-lots, negative for a rebate
 
 
+@dataclass(frozen=True)
+class News:
+    time: int        # simulated nanoseconds since the start, when the headline came out
+    headline: str    # e.g. "Good news: value up about 8"
+    change: int      # the jump in the true value, in ticks, rounded to a whole tick
+
+
 @dataclass
 class State:
     time: int                     # simulated nanoseconds since the start
@@ -119,6 +126,7 @@ class State:
     reference_price: int
     trades: list[Trade] = field(default_factory=list)  # since the last turn
     fills: list[Fill] = field(default_factory=list)    # this seat's, since the last turn
+    news: list[News] = field(default_factory=list)     # headlines since the last turn
 
     @property
     def mid(self) -> float | None:
@@ -144,6 +152,7 @@ class State:
         d["asks"] = [tuple(x) for x in d.get("asks", [])]
         d["trades"] = [Trade(**t) for t in d.get("trades", [])]
         d["fills"] = [Fill(**f) for f in d.get("fills", [])]
+        d["news"] = [News(**n) for n in d.get("news", [])]
         return cls(**d)
 
 

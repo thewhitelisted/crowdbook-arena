@@ -9,7 +9,7 @@ from typing import Any
 
 from starlette.websockets import WebSocket
 
-from arena_kit.markets import MarketKind
+from arena_kit.markets import NEWS_DELAYS, MarketKind, has_news, headlines
 
 from .auth import new_code, new_token, token_hash
 from .config import Settings
@@ -136,8 +136,8 @@ class GameHub:
             "code": self.game["code"], "name": self.game["name"], "players": players,
             "rounds": [round_info(r) for r in store.rounds(self.game["id"])],
             "current": round_info(self.round) if self.round else None,
-            "markets": [{"name": k.name, "title": k.title, "description": k.description}
-                        for k in self.arena.kinds.values()],
+            "markets": [{"name": k.name, "title": k.title, "description": k.description,
+                         "news": has_news(k)} for k in self.arena.kinds.values()],
         }
 
     # Rounds
@@ -165,6 +165,12 @@ class GameHub:
                             else settings.max_lockstep_duration_s)
             kind_obj: MarketKind = self.arena.kinds[market]
             config: dict[str, Any] = {"duration_s": duration, "market_title": kind_obj.title}
+            news: list = []
+            if has_news(kind_obj):
+                delay = spec.get("news", "experts")
+                if delay not in NEWS_DELAYS:
+                    raise GameError(f"news: one of {', '.join(NEWS_DELAYS)}")
+                config["news"] = delay
             if kind == "live":
                 speed = spec.get("speed", 1)
                 if (isinstance(speed, bool) or not isinstance(speed, (int, float))
@@ -182,6 +188,8 @@ class GameHub:
                 raise GameError("no players")
             rnd = self.arena.store.add_round(self.game["id"], kind, market, seed, config)
             scenario = kind_obj.scenario(seed, duration)
+            if "news" in config:
+                news = headlines(kind_obj, seed, duration, config["news"])
             on_end = lambda scores: self._round_ended(rnd, scores)  # noqa: E731
             try:
                 if kind == "live":
@@ -190,13 +198,14 @@ class GameHub:
                         speed=config["speed"], player_ids=[p["id"] for p in players],
                         crowdbook=settings.crowdbook, work_dir=settings.work_dir, send=self.send,
                         on_end=on_end, rate_limit=settings.rate_limit,
-                        feed_interval_ms=settings.feed_interval_ms, watch=self._watchers)
+                        feed_interval_ms=settings.feed_interval_ms, watch=self._watchers,
+                        news=news, announce=self.broadcast)
                 else:
                     runner = LockstepRound(
                         round_id=rnd["id"], scenario=scenario, seed=seed,
                         player_ids=[p["id"] for p in players],
                         timeout_ms=config["turn_timeout_ms"], send=self.send,
-                        connected=lambda pid: bool(self.conns.get(pid)),
+                        connected=lambda pid: bool(self.conns.get(pid)), news=news,
                         on_progress=self._lockstep_progress, on_end=on_end)
                 self.round, self.runner = rnd, runner
                 await runner.start()

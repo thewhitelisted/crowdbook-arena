@@ -158,3 +158,32 @@ def test_a_challenge_in_the_browser(server):
         assert "bob" in b.text_content("#board-body")
         browser.close()
     assert errors == []
+
+
+def test_news_in_the_browser(server):
+    from test_news import Newsy
+
+    server.app.state.arena.kinds["newsy"] = Newsy()
+    errors = []
+    game = server.new_game("alice")
+    code = game["code"]
+    with playwright.sync_playwright() as p:
+        browser = p.chromium.launch()
+        a = browser.new_context(viewport={"width": 1280, "height": 1000}).new_page()
+        a.on("pageerror", lambda e: errors.append(str(e)))
+        a.goto(server.url)
+        a.evaluate(f"sessionStorage.setItem('arena:{code}', '{game['token']}')")
+        a.goto(f"{server.url}/g/{code}")
+        a.wait_for_selector("#host-controls:not(.hidden)")
+        a.select_option("#market", "newsy")
+        assert a.is_visible("#news-delay")
+        a.select_option("#news-delay", "instant")
+        a.fill("#duration", "20")
+        a.fill("#speed", "4")
+        a.click("#start-round")
+        a.wait_for_selector("#news-panel:not(.hidden)")
+        a.wait_for_function("document.getElementById('news').textContent.includes('Good news')",
+                            timeout=10000)
+        a.screenshot(path=str(SHOTS / "news.png"))
+        browser.close()
+    assert errors == []

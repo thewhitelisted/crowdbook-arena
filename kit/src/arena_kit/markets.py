@@ -10,8 +10,30 @@ scenario has a `[participant]` section for the players' seats, `[scoring]` for l
 
 from __future__ import annotations
 
+import math
+import random
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
+
+SECOND = 1_000_000_000
+
+# When players hear of a jump in the true value, if a kind has news: at once, with the experts
+# (about two seconds late), with the crowd (about thirty), or never.
+NEWS_DELAYS: dict[str, int | None] = {"instant": 0, "experts": 2 * SECOND, "crowd": 30 * SECOND,
+                                      "off": None}
+
+
+@dataclass(frozen=True)
+class Jump:
+    time: int       # simulated nanoseconds since the start
+    change: float   # ticks
+
+
+def headline(change: float) -> str:
+    size = round(abs(change))
+    if size == 0:
+        return "Minor news: the value barely moves"
+    return f"{'Good' if change > 0 else 'Bad'} news: value {'up' if change > 0 else 'down'} about {size}"
 
 
 @runtime_checkable
@@ -26,6 +48,50 @@ class MarketKind(Protocol):
         """The scenario's text for a round with this seed, lasting `duration_s` simulated
         seconds."""
         ...
+
+
+def jumps_of(kind: MarketKind, seed: int, duration_s: int) -> list[Jump]:
+    """The jumps in a kind's true value that make news, for kinds that have them (a `jumps`
+    method with the same arguments as `scenario`); none for the rest."""
+    jumps = getattr(kind, "jumps", None)
+    return list(jumps(seed, duration_s)) if callable(jumps) else []
+
+
+def has_news(kind: MarketKind) -> bool:
+    has = getattr(kind, "has_news", None)
+    return bool(has()) if callable(has) else callable(getattr(kind, "jumps", None))
+
+
+def headlines(kind: MarketKind, seed: int, duration_s: int, delay: str = "experts") -> list:
+    """The headlines players get in a round of this kind: one for each jump, `delay` after it
+    (a key of NEWS_DELAYS), in time order."""
+    from .bot import News
+
+    if delay not in NEWS_DELAYS:
+        raise ValueError(f"news delay: one of {', '.join(NEWS_DELAYS)}")
+    lag = NEWS_DELAYS[delay]
+    if lag is None:
+        return []
+    out = [News(j.time + lag, headline(j.change), round(j.change))
+           for j in jumps_of(kind, seed, duration_s)]
+    return [n for n in sorted(out, key=lambda n: n.time) if n.time <= duration_s * SECOND]
+
+
+_VALUE_PATH: list[bool] = []
+
+
+def engine_has_value_path() -> bool:
+    """Whether the installed crowdbook takes a recorded `path` in [fundamental] (from 0.14)."""
+    if not _VALUE_PATH:
+        import crowdbook_learn
+
+        probe = 'duration = "2s"\nreference_price = 100\n[fundamental]\npath = [[0, 100.0]]\n'
+        try:
+            crowdbook_learn.Pool.from_text(probe, markets=1, threads=1)
+            _VALUE_PATH.append(True)
+        except Exception:
+            _VALUE_PATH.append(False)
+    return _VALUE_PATH[0]
 
 
 @dataclass(frozen=True)
@@ -162,17 +228,65 @@ CALM = TemplateKind(
     template=_template('\n[fundamental]\nvolatility = 0.5\nstep = "250ms"\n'),
 )
 
-NEWS = TemplateKind(
+@dataclass(frozen=True)
+class NewsKind:
+    """A market whose true value wanders and jumps on news. The value's path is drawn here, from
+    the round's seed, and given to crowdbook as a recorded path, so that the jumps are known and
+    can be told to players as headlines."""
+
+    name: str
+    title: str
+    description: str
+    template: str
+    volatility: float = 0.3   # ticks per square root of a second
+    step_s: float = 0.25
+    jump_rate: float = 1 / 60  # a second
+    jump_size: float = 8.0     # ticks, the standard deviation of a jump
+    initial: float = 10000.0
+
+    def _walk(self, seed: int, duration_s: int) -> tuple[list[tuple[float, float]], list[Jump]]:
+        rng = random.Random(f"news-path:{seed}")
+        value, path, jumps = self.initial, [(0.0, self.initial)], []
+        p_jump = 1 - math.exp(-self.jump_rate * self.step_s)
+        for i in range(1, int(duration_s / self.step_s) + 1):
+            t = i * self.step_s
+            value += rng.gauss(0, self.volatility * math.sqrt(self.step_s))
+            if rng.random() < p_jump:
+                change = rng.gauss(0, self.jump_size)
+                value += change
+                jumps.append(Jump(round(t * SECOND), change))
+            path.append((t, value))
+        return path, jumps
+
+    fallback: str = ""        # the engine's own jumps, for a crowdbook without value paths
+
+    def has_news(self) -> bool:
+        return engine_has_value_path()
+
+    def scenario(self, seed: int, duration_s: int) -> str:
+        if not self.has_news():
+            return self.fallback.format(seed=int(seed), duration=f"{int(duration_s)}s")
+        path, _ = self._walk(seed, duration_s)
+        points = ", ".join(f"[{t:g}, {v:.3f}]" for t, v in path)
+        return self.template.format(seed=int(seed), duration=f"{int(duration_s)}s",
+                                    path=points)
+
+    def jumps(self, seed: int, duration_s: int) -> list[Jump]:
+        return self._walk(seed, duration_s)[1] if self.has_news() else []
+
+
+NEWS = NewsKind(
     name="news",
     title="News",
     description=(
         "The true value jumps by about eight ticks without warning, about once a minute. Experts "
-        "see the news a couple of seconds late, the crowd half a minute later."
+        "see the news a couple of seconds late, the crowd half a minute later. Players get a "
+        "headline too, when the host chooses."
     ),
-    template=_template(
+    template=_template('\n[fundamental]\npath = [{path}]\n', expert_lag="2s"),
+    fallback=_template(
         '\n[fundamental]\nvolatility = 0.3\nstep = "250ms"\njump_rate = 0.0167\njump_size = 8.0\n',
-        expert_lag="2s",
-    ),
+        expert_lag="2s"),
 )
 
 TRENDING = TemplateKind(
