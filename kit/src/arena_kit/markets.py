@@ -197,25 +197,25 @@ interval = "500ms"
 fast_half_life = "2s"
 slow_half_life = "20s"
 threshold = 1.0
-order_size = 3
-max_position = 30
+order_size = {trend_size}
+max_position = {trend_max}
 latency = {{ to_exchange = "500us", from_exchange = "500us", jitter = "200us" }}
-account = {{ max_position = 33, max_order_quantity = 3 }}
+account = {{ max_position = {trend_account}, max_order_quantity = {trend_size} }}
 
 [[agents]]
 type = "informed"
 name = "experts"
-count = 2
-interval = "2s"
+count = {experts}
+interval = "{expert_interval}"
 noise = 1.0
 error = 1.0
 error_memory = "300s"
 lag = "{expert_lag}"
-threshold = 2.0
-order_size = 3
-max_position = 300
+threshold = {expert_threshold}
+order_size = {expert_size}
+max_position = {expert_max}
 latency = {{ to_exchange = "200us", from_exchange = "200us", jitter = "50us" }}
-account = {{ max_position = 303, max_order_quantity = 3 }}
+account = {{ max_position = {expert_account}, max_order_quantity = {expert_size} }}
 
 [[agents]]
 type = "informed"
@@ -235,11 +235,19 @@ account = {{ max_position = 203, max_order_quantity = 3 }}
 
 
 def _template(fundamental: str, *, noise: int = 60, market_rate: float = 0.05, trend: int = 5,
-              expert_lag: str = "1s", max_position: int = 100, max_order: int = 20) -> str:
+              trend_size: int = 3, trend_max: int = 30, experts: int = 2,
+              expert_interval: str = "2s", expert_size: int = 3, expert_threshold: float = 2.0,
+              expert_max: int = 300, expert_lag: str = "1s", max_position: int = 100,
+              max_order: int = 20) -> str:
     head = 'seed = {seed}\nduration = "{duration}"\nreference_price = 10000\n'
     exchange = "\n[exchange]\ndepth_levels = 10\nmaker_fee = -0.1\ntaker_fee = 0.2\n"
     seat = _SEAT.format(max_position=max_position, max_order=max_order)
     crowd = _CROWD.format(noise=noise, market_rate=market_rate, trend=trend,
+                          trend_size=trend_size, trend_max=trend_max,
+                          trend_account=trend_max + trend_size, experts=experts,
+                          expert_interval=expert_interval, expert_size=expert_size,
+                          expert_threshold=expert_threshold, expert_max=expert_max,
+                          expert_account=expert_max + expert_size,
                           expert_lag=expert_lag)
     # The seat and crowd are formatted now; only {seed} and {duration} are left for the round.
     seat = seat.replace("{", "{{").replace("}", "}}")
@@ -274,27 +282,35 @@ def _brief(asset: str, flavour: str, behaviour: str, crowd: str) -> str:
 
 
 _CROWD_TEXT = ("market makers quoting both sides; a crowd of small traders who buy and sell at "
-               "random; {trend}; a few well-informed traders who learn the fair value before "
-               "anyone else; and a slower crowd that catches up later.")
+               "random; {trend}; a pack of well-informed traders who learn the fair value "
+               "moments before anyone else and trade hard on it, so quotes left where the price "
+               "used to be get picked off; and a slower crowd that catches up later.")
+
+# The well-informed traders every public kind has: enough of them, trading often enough, to keep
+# the price near the fair value, and to make careless quoting costly.
+_INFORMED = dict(experts=8, expert_interval="1s", expert_size=10, expert_threshold=1.0,
+                 expert_max=5000, market_rate=0.02)
 
 
 CALM = TemplateKind(
     name="calm",
     title="Sea Salt",
-    description="A calm asset: its fair value drifts slowly, with no news and no sudden moves.",
-    template=_template('\n[fundamental]\nvolatility = 0.5\nstep = "250ms"\n'),
+    description="A calm asset: its fair value drifts steadily, a little at a time, with no news.",
+    template=_template('\n[fundamental]\nvolatility = 2.5\nstep = "250ms"\n', expert_lag="500ms",
+                       **_INFORMED),
     brief=_brief("Sea Salt", "raked from the shallows and traded every day by everyone on the "
                  "island.",
-                 "a calm asset. Its fair value drifts slowly, without sudden moves, and there is "
-                 "no news.",
+                 "a calm asset. Its fair value is always on the move, a little at a time and "
+                 "without sudden jumps, and there is no news. Over a few minutes those small moves "
+                 "add up.",
                  _CROWD_TEXT.format(trend="a few trend followers")),
 )
 
 @dataclass(frozen=True)
-class NewsKind:
-    """A market whose true value wanders and jumps on news. The value's path is drawn here, from
-    the round's seed, and given to crowdbook as a recorded path, so that the jumps are known and
-    can be told to players as headlines."""
+class PathKind:
+    """A market whose true value's path is drawn here, from the round's seed, and given to
+    crowdbook as a recorded path: a random walk, with jumps on news (told to players as
+    headlines, when `news`) and spells of trend, if asked for."""
 
     name: str
     title: str
@@ -305,14 +321,21 @@ class NewsKind:
     jump_rate: float = 1 / 60  # a second
     jump_size: float = 8.0     # ticks, the standard deviation of a jump
     initial: float = 10000.0
+    trend_sd: float = 0.0      # ticks a second, the standard deviation of a spell's drift
+    trend_s: float = 30.0      # seconds a spell of trend lasts, on average
+    news: bool = True          # whether jumps come with headlines
 
     def _walk(self, seed: int, duration_s: int) -> tuple[list[tuple[float, float]], list[Jump]]:
         rng = random.Random(f"news-path:{seed}")
         value, path, jumps = self.initial, [(0.0, self.initial)], []
         p_jump = 1 - math.exp(-self.jump_rate * self.step_s)
+        p_turn = 1 - math.exp(-self.step_s / self.trend_s)
+        drift = rng.gauss(0, self.trend_sd) if self.trend_sd else 0.0
         for i in range(1, int(duration_s / self.step_s) + 1):
             t = i * self.step_s
-            value += rng.gauss(0, self.volatility * math.sqrt(self.step_s))
+            if self.trend_sd and rng.random() < p_turn:
+                drift = rng.gauss(0, self.trend_sd)
+            value += drift * self.step_s + rng.gauss(0, self.volatility * math.sqrt(self.step_s))
             if rng.random() < p_jump:
                 change = rng.gauss(0, self.jump_size)
                 value += change
@@ -327,10 +350,10 @@ class NewsKind:
         return self.brief.format(duration=_minutes(duration_s))
 
     def has_news(self) -> bool:
-        return engine_has_value_path()
+        return self.news and engine_has_value_path()
 
     def scenario(self, seed: int, duration_s: int) -> str:
-        if not self.has_news():
+        if not engine_has_value_path():
             return self.fallback.format(seed=int(seed), duration=f"{int(duration_s)}s")
         path, _ = self._walk(seed, duration_s)
         points = ", ".join(f"[{t:g}, {v:.3f}]" for t, v in path)
@@ -341,34 +364,48 @@ class NewsKind:
         return self._walk(seed, duration_s)[1] if self.has_news() else []
 
 
-NEWS = NewsKind(
+NewsKind = PathKind  # the name it had before it drew paths other than the news market's
+
+
+NEWS = PathKind(
     name="news",
     title="Pearls",
-    description=("Mostly quiet, but its fair value jumps when news breaks. The well-informed hear "
+    description=("Quiet stretches, then sharp jumps when news breaks. The well-informed hear "
                  "first, the crowd later; players get headlines too, when the host chooses."),
-    template=_template('\n[fundamental]\npath = [{path}]\n', expert_lag="2s"),
+    template=_template('\n[fundamental]\npath = [{path}]\n', expert_lag="2s", **_INFORMED),
+    volatility=0.5,
+    jump_rate=1 / 60,
+    jump_size=50.0,
     fallback=_template(
-        '\n[fundamental]\nvolatility = 0.3\nstep = "250ms"\njump_rate = 0.0167\njump_size = 8.0\n',
-        expert_lag="2s"),
+        '\n[fundamental]\nvolatility = 0.5\nstep = "250ms"\njump_rate = 0.0167\njump_size = 50.0\n',
+        expert_lag="2s", **_INFORMED),
     brief=_brief("Pearls", "scarce and prized; what they are worth turns on word from the "
                  "divers.",
-                 "mostly quiet, but its fair value jumps when news breaks, now and then, up or "
-                 "down and by a good margin. The well-informed trade on the news first; the "
-                 "crowd follows.",
+                 "quiet stretches, then sharp jumps when news breaks, now and then, up or down "
+                 "and by enough to matter. The well-informed trade on the news first; the crowd "
+                 "follows. Quotes left in the book when news breaks are what the jump hits.",
                  _CROWD_TEXT.format(trend="a few trend followers")),
 )
 
-TRENDING = TemplateKind(
+TRENDING = PathKind(
     name="trending",
     title="Coral",
-    description=("Volatile and trend-prone: a livelier fair value and a pack of trend followers, "
-                 "so moves overshoot and come back."),
-    template=_template('\n[fundamental]\nvolatility = 1.0\nstep = "250ms"\n', trend=15,
-                       market_rate=0.08),
+    description=("Volatile and trend-prone: its fair value runs one way for a while, then turns, "
+                 "and trend followers chase every move, so prices overshoot and come back."),
+    template=_template('\n[fundamental]\npath = [{path}]\n', trend=15, expert_lag="500ms",
+                       **{**_INFORMED, "market_rate": 0.04}),
+    volatility=3.0,
+    jump_rate=0.0,
+    trend_sd=1.5,
+    trend_s=30.0,
+    news=False,
+    fallback=_template('\n[fundamental]\nvolatility = 3.0\nstep = "250ms"\n', trend=15,
+                       expert_lag="500ms", **{**_INFORMED, "market_rate": 0.04}),
     brief=_brief("Coral", "the island's favourite building stone, its price swinging with "
                  "the mood of the builders.",
-                 "volatile and trend-prone. Its fair value moves faster than the others', and "
-                 "trend followers chase every move, so prices overshoot and come back. No news.",
+                 "volatile and trend-prone. Its fair value moves fast, and runs one way for a "
+                 "while before it turns; trend followers chase every move, so prices overshoot "
+                 "and come back. No news.",
                  _CROWD_TEXT.format(trend="a pack of trend followers who chase every move")),
 )
 

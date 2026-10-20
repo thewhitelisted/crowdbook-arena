@@ -159,6 +159,7 @@ function setGame(g) {
   }
   $("start-round").classList.toggle("hidden", !!g.current);
   $("stop-round").classList.toggle("hidden", !g.current);
+  $("lobby").classList.toggle("in-round", !!g.current);
   showBriefing(g.current, g.ready_check);
   if (g.current) {
     $("round-title").textContent =
