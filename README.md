@@ -73,6 +73,32 @@ uv run arena-kit join kit/examples/starter_bot.py --server http://127.0.0.1:8000
 
 The same code runs offline and in a game, unchanged.
 
+### Bots in the browser
+
+A player who would rather not run `arena-kit join` can paste the same bot file into the "Your bot"
+panel on the game page and press Deploy. The bot joins the game as a bot player, named
+"<player>'s bot" unless they choose another name, and plays from its own seat, the same as with
+`arena-kit join`:
+- live rounds, through the same order handling, with the same sizing and buying-power rules;
+- lockstep rounds, through the same turn protocol, scoring exactly what `arena-kit test` gives the
+  same file on the same seed (the tests check this).
+
+The code runs in the player's own tab: Python in the browser ([Pyodide](https://pyodide.org), in a
+Web Worker), with the kit's pure-Python modules, which the arena serves at `/api/kit`. The server
+never runs it. Since it runs in the tab, the tab must stay open: closing it drops the bot's
+connection, as a dropped `arena-kit join` would, and its live orders are cancelled. A reload carries
+on as the same bot player, from the token, name and code the tab keeps.
+
+While the bot runs, its panel shows its position, P&L, fees, resting quotes and recent fills, what it
+prints, and its errors with their tracebacks. Its fills are also marked on the price chart, as
+hollow triangles. A file that does not load (a syntax error, a failed import, no bot in it) never
+joins the game. A turn that raises leaves the bot's quotes as they were, as in a game from the
+command line. `run_local` and `arena-kit test` are not available in the browser: test offline first,
+then paste.
+
+Pyodide comes from a pinned release on jsDelivr, or from `ARENA_PYODIDE_URL` for a host who serves
+a copy.
+
 ### Lockstep rounds
 
 In a lockstep round, which is for bots, each bot trades its own copy of the same market, from the
@@ -205,6 +231,7 @@ All settings come from environment variables:
 | `ARENA_MAX_LOCKSTEP_DURATION_S` | `7200` | The longest lockstep round, in simulated seconds. |
 | `ARENA_LOCKSTEP_TIMEOUT_MS` | `2000` | A lockstep turn's timeout, unless the round sets its own. |
 | `ARENA_MAX_CHALLENGE_DURATION_S` | a week | The longest a challenge can stay open. |
+| `ARENA_PYODIDE_URL` | Pyodide 0.27.2 on jsDelivr | Where players' tabs load Pyodide from for browser bots: a folder URL, ending in `/`. |
 | `ARENA_RATE_LIMIT` | `50` | Messages a seat may send a second. |
 | `ARENA_FEED_INTERVAL_MS` | `100` | How often market data is batched to screens. |
 | `ARENA_CROWDBOOK` | the venv's | The `crowdbook` command that serves live rounds. |

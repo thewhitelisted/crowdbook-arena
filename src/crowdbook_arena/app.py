@@ -8,6 +8,7 @@
     POST /api/games/{code}/rounds/begin     (host) opens a live round's market without waiting
     GET  /api/games/{code}/rounds/{number}                               -> a round and its results
     GET  /api/games/{code}/leaderboard                                   -> the game's leaderboards
+    GET  /api/kit                                                        -> the kit for browser bots
     GET  /api/kinds/{name}/briefing?duration_s=&news=                    -> a market's briefing
     WS   /ws    first message {"type": "auth", "token"}; then order requests
 
@@ -30,6 +31,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from arena_kit import browser as arena_browser
 from arena_kit.markets import NEWS_DELAYS, has_news
 
 from .config import Settings
@@ -141,6 +143,14 @@ def create_app(settings: Settings | None = None) -> Starlette:
                                        news if has_news(kind) else None)
         return JSONResponse({"name": kind.name, "briefing": text})
 
+    kit_dir = Path(arena_browser.__file__).parent
+    kit_files = {name: (kit_dir / name).read_text() for name in arena_browser.PACKAGE_FILES}
+
+    async def kit(_request: Request) -> JSONResponse:
+        """The kit's pure-Python modules, for a bot that runs in a player's own tab."""
+        return JSONResponse({"pyodide": settings.pyodide_url, "init": arena_browser.PACKAGE_INIT,
+                             "files": kit_files})
+
     async def ws_endpoint(ws: WebSocket) -> None:
         await ws.accept()
         try:
@@ -205,6 +215,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
             Route("/", page),
             Route("/g/{code}", game_page),
             Route("/api/kinds", kinds),
+            Route("/api/kit", kit),
             Route("/api/kinds/{name}/briefing", kind_briefing),
             Route("/api/games", create_game, methods=["POST"]),
             Route("/api/games/{code}", get_game),

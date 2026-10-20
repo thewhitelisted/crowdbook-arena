@@ -14,8 +14,6 @@ import logging
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
-import websockets
-
 from .bot import Bot, Fill, News, Quote, State, Trade
 from .tracker import SeatTracker
 
@@ -165,89 +163,114 @@ class LiveDriver:
                                   "quantity": size})
 
 
+class Session:
+    """A bot's side of its connection to an arena: what it does with each message from the
+    server, whatever carries the messages (a WebSocket here, a browser tab's in the browser).
+    `send` takes each message for the server."""
+
+    def __init__(self, bot: Bot, send: Callable[[dict[str, Any]], Any], *,
+                 rounds: int | None = None):
+        self.bot = bot
+        self.send = send
+        self.rounds = rounds
+        self.done: list[dict[str, Any]] = []
+        self.me: dict[str, Any] | None = None
+        self.tracker: SeatTracker | None = None
+        self.driver: LiveDriver | None = None
+        self.live_round: int | None = None
+        self.known: dict[int, dict[str, Any]] = {}  # the rounds the server has described, by id
+
+    async def handle(self, msg: dict[str, Any]) -> bool:
+        """Acts on one message from the server; True once `rounds` rounds have ended. Raises
+        ConnectionError when the server refuses the connection."""
+        bot, send = self.bot, self.send
+        kind = msg.get("type")
+        if kind in ("welcome", "game") and msg["game"].get("current"):
+            self.known[msg["game"]["current"]["id"]] = msg["game"]["current"]
+        elif kind == "round_started":
+            self.known[msg["round"]["id"]] = msg["round"]
+        if kind == "welcome":
+            self.me = msg["player"]
+        elif kind == "error":
+            if msg.get("fatal"):
+                raise ConnectionError(msg.get("message"))
+            log.warning("server: %s", msg.get("message"))
+            request = msg.get("request")
+            if self.tracker and isinstance(request, dict) and "id" in request:
+                # The server refused it, so the gateway never saw it.
+                self.tracker.pending.pop(request["id"], None)
+        elif kind == "live_snapshot" and msg.get("seated"):
+            if (self.driver is not None and self.tracker is not None
+                    and self.live_round == msg["round"]):
+                self.tracker.load(msg["state"])  # the same round again: carry on as we were
+                self.driver.cancelling.clear()
+                self.driver.modifying.clear()
+            else:
+                self.tracker = SeatTracker()
+                self.tracker.load(msg["state"])
+                self.driver = LiveDriver(bot, self.tracker, send,
+                                         info=round_start_info(self.known.get(msg["round"])))
+                self.live_round = msg["round"]
+        elif kind == "news" and self.driver and msg["round"] == self.live_round:
+            self.driver.news.append(News(msg["time"], msg["headline"], msg["change"]))
+        elif (kind == "live" and self.tracker and self.driver
+              and msg["round"] == self.live_round):
+            self.tracker.apply(msg["m"])
+            await self.driver.on_message(msg["m"])
+        elif kind == "turn":
+            # A lockstep round: answer every turn with this turn's quote.
+            if msg["round"] != self.live_round:
+                self.live_round = msg["round"]
+                s = msg["state"]
+                try:
+                    bot.on_start({**round_start_info(self.known.get(msg["round"])),
+                                  "mode": "lockstep", "round": msg["round"],
+                                  "max_position": s["max_position"],
+                                  "max_order_quantity": s["max_order_quantity"]})
+                except Exception:
+                    log.exception("the bot's on_start raised")
+            try:
+                quote = bot.on_turn(State.from_json(msg["state"]))
+            except Exception:
+                log.exception("the bot's on_turn raised; it answers nothing this turn")
+                quote = None
+            answer = quote.to_json() if quote is not None else _keep(msg["state"])
+            await send({"type": "orders", "turn": msg["turn"], **answer})
+        elif kind == "round_ended":
+            me = self.me
+            mine = next((r for r in msg["results"] if me and r["player_id"] == me["id"]), None)
+            result = {"round": msg["round"], "result": mine, "results": msg["results"]}
+            if mine is not None:
+                bot.on_end(result)
+            self.done.append(result)
+            self.known.pop(msg["round"]["id"], None)
+            self.tracker = self.driver = None
+            self.live_round = None
+            if self.rounds is not None and len(self.done) >= self.rounds:
+                return True
+        return False
+
+
 async def play(bot: Bot, server: str, token: str, *, rounds: int | None = None,
                on_event: Callable[[dict[str, Any]], None] | None = None) -> list[dict[str, Any]]:
     """Plays `bot` from the seat of the player whose token this is, in every round the host
     starts, until `rounds` have ended (every round until the connection closes if None). Returns
     each round's results."""
-    done: list[dict[str, Any]] = []
+    import websockets
+
     async with websockets.connect(ws_url(server), max_size=None) as ws:
         async def send(msg: dict[str, Any]) -> None:
             await ws.send(json.dumps(msg))
 
+        session = Session(bot, send, rounds=rounds)
         await send({"type": "auth", "token": token})
-        me: dict[str, Any] | None = None
-        tracker: SeatTracker | None = None
-        driver: LiveDriver | None = None
-        live_round: int | None = None
-        known: dict[int, dict[str, Any]] = {}  # the rounds the server has described, by id
         async for raw in ws:
             msg = json.loads(raw)
             if on_event:
                 on_event(msg)
-            kind = msg.get("type")
-            if kind in ("welcome", "game") and msg["game"].get("current"):
-                known[msg["game"]["current"]["id"]] = msg["game"]["current"]
-            elif kind == "round_started":
-                known[msg["round"]["id"]] = msg["round"]
-            if kind == "welcome":
-                me = msg["player"]
-            elif kind == "error":
-                if msg.get("fatal"):
-                    raise ConnectionError(msg.get("message"))
-                log.warning("server: %s", msg.get("message"))
-                request = msg.get("request")
-                if tracker and isinstance(request, dict) and "id" in request:
-                    # The server refused it, so the gateway never saw it.
-                    tracker.pending.pop(request["id"], None)
-            elif kind == "live_snapshot" and msg.get("seated"):
-                if driver is not None and tracker is not None and live_round == msg["round"]:
-                    tracker.load(msg["state"])  # the same round again: carry on as we were
-                    driver.cancelling.clear()
-                    driver.modifying.clear()
-                else:
-                    tracker = SeatTracker()
-                    tracker.load(msg["state"])
-                    driver = LiveDriver(bot, tracker, send,
-                                        info=round_start_info(known.get(msg["round"])))
-                    live_round = msg["round"]
-            elif kind == "news" and driver and msg["round"] == live_round:
-                driver.news.append(News(msg["time"], msg["headline"], msg["change"]))
-            elif kind == "live" and tracker and driver and msg["round"] == live_round:
-                tracker.apply(msg["m"])
-                await driver.on_message(msg["m"])
-            elif kind == "turn":
-                # A lockstep round: answer every turn with this turn's quote.
-                if msg["round"] != live_round:
-                    live_round = msg["round"]
-                    s = msg["state"]
-                    try:
-                        bot.on_start({**round_start_info(known.get(msg["round"])),
-                                      "mode": "lockstep", "round": msg["round"],
-                                      "max_position": s["max_position"],
-                                      "max_order_quantity": s["max_order_quantity"]})
-                    except Exception:
-                        log.exception("the bot's on_start raised")
-                try:
-                    quote = bot.on_turn(State.from_json(msg["state"]))
-                except Exception:
-                    log.exception("the bot's on_turn raised; it answers nothing this turn")
-                    quote = None
-                answer = quote.to_json() if quote is not None else _keep(msg["state"])
-                await send({"type": "orders", "turn": msg["turn"], **answer})
-            elif kind == "round_ended":
-                mine = next((r for r in msg["results"] if me and r["player_id"] == me["id"]),
-                            None)
-                result = {"round": msg["round"], "result": mine, "results": msg["results"]}
-                if mine is not None:
-                    bot.on_end(result)
-                done.append(result)
-                known.pop(msg["round"]["id"], None)
-                tracker = driver = None
-                live_round = None
-                if rounds is not None and len(done) >= rounds:
-                    break
-    return done
+            if await session.handle(msg):
+                break
+        return session.done
 
 
 def _keep(state: dict[str, Any]) -> dict[str, Any]:

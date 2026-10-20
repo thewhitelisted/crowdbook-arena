@@ -33,6 +33,9 @@ class Settings:
     lockstep_timeout_ms: int = 2000   # how long a bot has to answer a turn, unless a round says
     max_lockstep_duration_s: int = 7200
     max_challenge_duration_s: int = 7 * 24 * 3600
+    # Where players' tabs load Pyodide from, to run bots pasted into the game page: a pinned
+    # release on the CDN, or a copy the host serves (the folder, ending in a slash).
+    pyodide_url: str = "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -53,6 +56,7 @@ class Settings:
                                          cls.max_lockstep_duration_s),
             max_challenge_duration_s=_int("ARENA_MAX_CHALLENGE_DURATION_S",
                                           cls.max_challenge_duration_s),
+            pyodide_url=os.environ.get("ARENA_PYODIDE_URL", cls.pyodide_url),
         )
 
 

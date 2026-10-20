@@ -165,6 +165,32 @@
       <tbody id="lockstep-body"></tbody></table>
   </section>
 
+  <section class="panel hidden" id="bot-panel">
+    <h2>Your bot <span class="dim" id="bot-phase"></span></h2>
+    <p class="dim" style="font-size:12px;margin-top:0">Paste the bot file you test with
+      <code>arena-kit test</code> and deploy it: it joins this game as a bot player and trades from
+      its own seat. It runs in this tab, in Python in your browser, never on the server, so keep the
+      tab open: closing it disconnects the bot, as if its connection dropped. A reload carries on.</p>
+    <textarea id="bot-code" rows="12" spellcheck="false" placeholder="from arena_kit import Bot, Quote, State&#10;&#10;class MyBot(Bot):&#10;    def on_turn(self, state: State) -> Quote | None:&#10;        ..."></textarea>
+    <div class="row" style="margin-top:8px">
+      <label>Name <input id="bot-name" maxlength="24"></label>
+      <button class="primary" id="bot-deploy">Deploy</button>
+      <button id="bot-stop" class="hidden">Stop</button>
+    </div>
+    <div class="error" id="bot-error"></div>
+    <div class="stats" style="margin-top:8px">
+      <div class="stat"><div class="k">Position</div><div class="v" id="bot-position">0</div></div>
+      <div class="stat"><div class="k">P&amp;L</div><div class="v" id="bot-pnl">$0.00</div></div>
+      <div class="stat"><div class="k">Fees</div><div class="v" id="bot-fees">$0.00</div></div>
+    </div>
+    <p class="dim" style="font-size:12px;margin:6px 0">Quotes resting: <span id="bot-quotes">none</span>.
+      Its fills show on the price chart as hollow triangles.</p>
+    <div class="bot-grid">
+      <div><h2>Fills</h2><div class="tape" style="max-height:180px"><table><tbody id="bot-fills"></tbody></table></div></div>
+      <div><h2>Output</h2><div class="tape bot-output" id="bot-output"></div></div>
+    </div>
+  </section>
+
   <section class="panel hidden" id="results">
     <h2>Results <span class="dim" id="results-title"></span></h2>
     <p id="solution" class="hidden"></p>

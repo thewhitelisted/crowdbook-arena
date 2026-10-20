@@ -184,3 +184,17 @@ class Bot:
 
     def on_end(self, result: dict[str, Any]) -> None:
         """Called once at the end with the round's result for this seat."""
+
+
+def bot_from_module(module: Any) -> Bot:
+    """The bot a bot file defines: `bot`, an instance of Bot, or else its one Bot subclass, made
+    with no arguments. Raises ValueError for a file that defines neither or several."""
+    import inspect
+
+    if isinstance(getattr(module, "bot", None), Bot):
+        return module.bot
+    classes = [c for _, c in inspect.getmembers(module, inspect.isclass)
+               if issubclass(c, Bot) and c is not Bot and c.__module__ == module.__name__]
+    if len(classes) != 1:
+        raise ValueError("define `bot = MyBot()` or exactly one Bot subclass")
+    return classes[0]()
