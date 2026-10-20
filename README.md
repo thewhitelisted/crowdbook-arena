@@ -163,9 +163,8 @@ up about 8". The host chooses when players see it:
 
 Screens show headlines in a news panel and on the price chart. Bots get them in `State.news`, at
 the same moments live, in lockstep and offline (`arena-kit test --news`). The arena draws the news
-market's value path itself, so that it knows each jump, and gives it to crowdbook as a recorded
-path. That needs crowdbook 0.14 or later. With 0.13, the news market's jumps come from crowdbook
-itself and there are no headlines.
+market's value path itself, so that it knows each jump, and gives it to crowdbook (0.14 or later)
+as a recorded path.
 
 A Python package installed on the server can add kinds of its own through the
 `crowdbook_arena.market_kinds` entry point group (see `src/crowdbook_arena/kinds.py`). Those kinds

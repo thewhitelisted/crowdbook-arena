@@ -78,7 +78,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "crowdbook-arena-kit", editable = "kit" },
-    { name = "crowdbook-engine", specifier = "==0.13.0" },
+    { name = "crowdbook-engine", specifier = "==0.14.0" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "starlette", specifier = ">=0.40" },
@@ -106,23 +106,23 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "crowdbook-engine", specifier = "==0.13.0" },
+    { name = "crowdbook-engine", specifier = "==0.14.0" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "websockets", specifier = ">=13" },
 ]
 
 [[package]]
 name = "crowdbook-engine"
-version = "0.13.0"
+version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/67/14/1a07c36d42e9c0210c887a4dbed4cbcdf123c5d8e820a3bc63542ae6f77f/crowdbook_engine-0.13.0.tar.gz", hash = "sha256:0232fd0ccebf5f4f7f759b1f23ca3cee7eb3d25efd45c5604165d28102079863", size = 2600714, upload-time = "2026-10-19T15:38:52.941Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/6d/92d1b8d4c504d6c287702a67939fcab4ad4e3196901ba9a46d0b0dd58e75/crowdbook_engine-0.14.0.tar.gz", hash = "sha256:f03f03be77f7329084de55330ac17795bab6b21454c7ab5431cb9a7678459c0c", size = 3374325, upload-time = "2026-10-20T16:59:39.273Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d3/57/1cc19033d91ef35fcf331d4b04681860fcfb272a9fe8539c57d00afbee0b/crowdbook_engine-0.13.0-cp312-abi3-macosx_14_0_arm64.whl", hash = "sha256:406bbbf0f6f93ce3f35e18e54b599589c4da379d4de342c5017a303acc4d4b4e", size = 769452, upload-time = "2026-10-19T15:38:47.208Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/31/507db1ba9e44607f335de5bd3378221562899ed53aaecc60328162898571/crowdbook_engine-0.13.0-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:98827ecde848ed885413fc710a7b9d28d074157e7e7f7a376125940786990c2b", size = 1177961, upload-time = "2026-10-19T15:38:49.057Z" },
-    { url = "https://files.pythonhosted.org/packages/88/94/4d81a0e740d4d1df79d287af4a23cc69e1a2bdc28f2c3f47fadde2ca21e8/crowdbook_engine-0.13.0-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5ac0c6bc7a02c08e519833fcbbca56de93b09e576c83a92bb37ef9797621eb47", size = 1302228, upload-time = "2026-10-19T15:38:50.913Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/b4/9f9e6fefa274cca1219fda3435b22f52da2c8080ced4da553e6e717f76f1/crowdbook_engine-0.14.0-cp312-abi3-macosx_14_0_arm64.whl", hash = "sha256:30338f818841f3f6d4cd0e78e80e9872a351e88fb6e1dc343aa0840f6e596a47", size = 778560, upload-time = "2026-10-20T16:59:34.301Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/3e/778582206524663931f02475426a1f5560a4eab4e75d7a9e7c92a80768dd/crowdbook_engine-0.14.0-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:78db688133891765ba2068372976d120315727fcd0abdc02816c823ec7b67d2c", size = 1186921, upload-time = "2026-10-20T16:59:36.372Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/78/d84235c4fd18711f9efb779815fe4867d6c6a698476ea98142e81d5836c2/crowdbook_engine-0.14.0-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2ecd4beb584c789d21310f0c0792f427ac99f353cf2b9cb3518fe90082666b0f", size = 1313249, upload-time = "2026-10-20T16:59:37.715Z" },
 ]
 
 [[package]]
