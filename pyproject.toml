@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "crowdbook-arena-kit",
-    "crowdbook-engine==0.14.0",
+    "crowdbook-engine==0.14.1",
     "starlette>=0.40",
     "uvicorn>=0.30",
     "websockets>=13",

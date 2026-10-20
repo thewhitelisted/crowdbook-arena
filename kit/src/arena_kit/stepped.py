@@ -100,17 +100,12 @@ class SteppedMarket:
         eq = money.equity(self.bankroll, float(s[_S["cash"]]), float(s[_S["fees"]]) / 1000,
                           position, at)
 
-        resting = self._resting()
         taken = "buy" if q.take > 0 else "sell" if q.take < 0 else None
 
-        def cut(side: str, level, rests):
+        def cut(side: str, level):
             if level is None or side == taken:
                 return None  # a take on a side leaves no quote there this turn
             size = min(level[1], money.room(side, position, 0, eq, level[0]))
-            if rests is not None and rests[0] == level[0]:
-                # The engine leaves an order at the same price as it is, size and all: keep it
-                # only if the bankroll still carries it.
-                return rests if rests[1] <= money.room(side, position, 0, eq, level[0]) else None
             return (level[0], size) if size > 0 else None
 
         take = q.take
@@ -118,7 +113,7 @@ class SteppedMarket:
             price = q.take_price or (ask if take > 0 else bid)
             take = min(abs(take), money.room(taken, position, 0, eq, price)) if price else 0
             take = take if q.take > 0 else -take
-        return Quote(bid=cut("buy", q.bid, resting.bid), ask=cut("sell", q.ask, resting.ask),
+        return Quote(bid=cut("buy", q.bid), ask=cut("sell", q.ask),
                      take=take, take_price=q.take_price)
 
     def _resting(self) -> Quote:
