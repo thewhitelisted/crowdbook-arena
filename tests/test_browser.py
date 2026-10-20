@@ -130,7 +130,9 @@ def test_a_challenge_in_the_browser(server):
                             ".includes('Pearls')")
         server.post(f"/api/games/{code}/rounds/stop", {}, game["token"])
         b.wait_for_selector("#results:not(.hidden)")
-        assert "The best answer" in b.text_content("#solution")
+        solution = b.text_content("#solution")
+        assert "The best answer" in solution and "You started with 1000 Shells" in solution
+        assert "Your answer, Shells → Pearls → Shells, ends with" in solution
         assert "Pearls" in b.text_content("#results-body")
         assert b.is_hidden("#challenge")
         b.wait_for_selector("#leaderboard:not(.hidden)")

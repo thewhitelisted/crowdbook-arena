@@ -497,8 +497,13 @@ function showResults(round, results) {
   const sol = round.config.solution;
   $("solution").classList.toggle("hidden", !sol);
   if (sol) {
-    $("solution").textContent = `The best answer: ${describeAnswer(sol.answer)}, worth ${sol.value} ` +
-      `(doing nothing is worth ${sol.nothing}). Scores are out of 100.`;
+    const mine = me && results.find((r) => r.player_id === me.id && r.details.explained);
+    $("solution").innerHTML = (sol.setup ? `${esc(sol.setup)}<br>` : "") +
+      (mine ? `Your answer, ${esc(describeAnswer(mine.details.answer))}, ${esc(mine.details.explained)}.<br>` : "") +
+      (sol.explained
+        ? `The best answer, ${esc(describeAnswer(sol.answer))}, ${esc(sol.explained)}.`
+        : `The best answer: ${esc(describeAnswer(sol.answer))}, worth ${Number(sol.value).toFixed(2)}.`) +
+      ` Scores are out of 100: the best answer scores 100 and doing nothing 0.`;
   }
   $("results-body").innerHTML = results.map((r) =>
     `<tr class="${me && r.player_id === me.id ? "pos" : ""}"><td>${r.rank}</td><td>${esc(r.name)}${r.kind === "bot" ? '<span class="badge">bot</span>' : ""}</td>` +

@@ -32,6 +32,9 @@ def test_auction_and_kelly_values_by_hand():
     c.worth, c.rivals, c.lo, c.hi = 100, 2, 50, 99  # 50 equally likely bids
     assert c.value({"bid": 75}) == pytest.approx(25 * (25 / 50) ** 2)
     assert c.value({"bid": 50}) == 0  # every rival bids at least 50, and ties lose
+    assert c.explain({"bid": 75}) == ("wins 25.00% of the time, for a profit of 25 when it "
+                                      "wins: an expected profit of 6.25")
+    assert c.setup() == "The crate was worth 100; 2 rivals each bid a whole number from 50 to 99."
     k = make("kelly", 3)
     k.p, k.odds = 0.6, 1.0
     assert k.best() == {"fraction": pytest.approx(0.2)}
@@ -129,7 +132,9 @@ def test_a_challenge_round_end_to_end(server):
     assert rows["bob"]["score"] == pytest.approx(100) and rows["bob"]["rank"] == 1
     assert rows["carol"]["score"] == 0 and rows["carol"]["details"]["answered"] is False
     assert rows["alice"]["score"] == 0  # a bid of 5 never wins, so it is worth nothing
+    assert "of the time" in rows["bob"]["details"]["explained"]
     sol = ended["round"]["config"]["solution"]
+    assert sol["setup"].startswith("The crate was worth") and "expected profit" in sol["explained"]
     assert sol["answer"] == make("auction", 9).best()
     stored = server.http.get(f"/api/games/{code}/rounds/1").json()
     assert stored["round"]["config"]["solution"] == sol
