@@ -83,9 +83,15 @@
           <p class="dim" style="font-size:12px;margin:6px 0 0" id="limits"></p>
         </div>
         <div class="panel">
-          <h2>Price <span class="dim" style="text-transform:none;letter-spacing:0">last trade each second;
-            <span class="pos">▲</span> your buys, <span class="neg">▼</span> your sells</span></h2>
-          <canvas id="chart" style="width:100%;height:200px;display:block"></canvas>
+          <div class="row" style="justify-content:space-between;margin:0 0 6px">
+            <h2 style="margin:0">Price <span class="dim" style="text-transform:none;letter-spacing:0">the
+              middle of the market; <span class="pos">▲</span> your buys, <span class="neg">▼</span> your sells</span></h2>
+            <div class="row ranges" id="chart-ranges" style="margin:0"></div>
+          </div>
+          <div style="position:relative">
+            <canvas id="chart" style="width:100%;height:220px;display:block;cursor:crosshair"></canvas>
+            <div id="chart-tip" class="chart-tip hidden"></div>
+          </div>
         </div>
         <div class="panel hidden" id="news-panel">
           <h2>News</h2>

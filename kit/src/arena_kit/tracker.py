@@ -13,6 +13,7 @@ from .bot import Fill, State, Trade
 FEE_UNITS = 1000  # fees and scores are sent in thousandths of a tick-lot
 SECOND = 1_000_000_000
 MAX_CHART_FILLS = 5000
+MID_STEP = SECOND // 4  # how finely the chart's line is sampled
 
 
 class SeatTracker:
@@ -30,7 +31,7 @@ class SeatTracker:
         self.position = 0
         self.fees = 0.0       # tick-lots
         self.traded = 0       # lots bought and sold
-        self.series: dict[int, int] = {}  # simulated second -> the last trade price in it
+        self.mids: dict[int, float] = {}  # quarter second -> the middle of the market then
         self.my_fills: list[list[Any]] = []  # [time, side, price, quantity], for the chart
         self.orders: dict[int, dict[str, Any]] = {}  # live orders the exchange has accepted
         self.pending: dict[int, dict[str, Any]] = {}  # new orders sent and not yet answered
@@ -104,15 +105,16 @@ class SeatTracker:
         elif kind == "trade":
             self.last_trade = m["price"]
             self.trades.append(Trade(m["time"], m["price"], m["quantity"], m["aggressor"]))
-            self.series[m["time"] // SECOND] = m["price"]
         elif kind == "top":
             # Only what depth does not already say: keep the deeper book when it agrees.
             bid, ask = m.get("bid"), m.get("ask")
             self.bids = _merge_top(self.bids, bid)
             self.asks = _merge_top(self.asks, ask)
+            self._note_mid()
         elif kind == "depth":
             self.bids = [(lv["price"], lv["quantity"]) for lv in m["bids"]]
             self.asks = [(lv["price"], lv["quantity"]) for lv in m["asks"]]
+            self._note_mid()
         elif kind == "end":
             self.ended = dict(m)
             self.cash = m["cash"] - self._initial_cash
@@ -120,6 +122,10 @@ class SeatTracker:
             self.fees = m["fees"] / FEE_UNITS
             self.orders.clear()
             self.pending.clear()
+
+    def _note_mid(self) -> None:
+        if self.bids and self.asks:
+            self.mids[self.time // MID_STEP] = (self.bids[0][0] + self.asks[0][0]) / 2
 
     def my_side(self, side: str) -> list[dict[str, Any]]:
         return [o for o in self.orders.values() if o["side"] == side and o["leaves"] > 0]
@@ -151,7 +157,7 @@ class SeatTracker:
             "initial_cash": self._initial_cash, "initial_position": self._initial_position,
             "bids": self.bids, "asks": self.asks, "last_trade": self.last_trade,
             "trades": [t.__dict__ for t in self.trades], "ended": self.ended,
-            "series": sorted(self.series.items()), "my_fills": self.my_fills,
+            "mids": sorted(self.mids.items()), "my_fills": self.my_fills,
         }
 
     def load(self, snap: dict[str, Any]) -> None:
@@ -174,7 +180,7 @@ class SeatTracker:
         self.last_trade = snap["last_trade"]
         self.trades.clear()
         self.trades.extend(Trade(**t) for t in snap["trades"])
-        self.series = {int(sec): price for sec, price in snap.get("series", [])}
+        self.mids = {int(q): mid for q, mid in snap.get("mids", [])}
         self.my_fills = [list(f) for f in snap.get("my_fills", [])]
         self.ended = snap["ended"]
 
