@@ -15,8 +15,19 @@ the network, and the server never runs anyone's code.
 > - lockstep rounds for bots;
 > - manual challenges;
 > - leaderboards across rounds;
-> - the players' kit;
-> - the groundwork for hosting: Docker, and Caddy for HTTPS ([docs/hosting.md](docs/hosting.md)).
+> - the players' kit, with practice data (`arena-kit practice`);
+> - the groundwork for hosting: Docker, and Caddy for HTTPS ([docs/hosting.md](docs/hosting.md));
+> - markets as island assets (Sea Salt, Pearls, Coral), each with a briefing that every connected
+>   player confirms before a live round's market opens;
+> - bots pasted into the game page, run in the player's own tab with Pyodide;
+> - pairs and baskets: several linked assets in a round, with one bankroll;
+> - a crowd tuned so that neither careless quoting nor simply following the flow is a sure thing
+>   (`tests/test_yardstick.py`), and a careful starter bot that profits modestly.
+>
+> Paused on 20 Oct 2026, with options (an item 4) next when work resumes. At that point: the
+> engine pin is `crowdbook-engine==0.14.1` (both `pyproject.toml` files), and the suite has 106
+> tests (`uv sync --group browser && uv run pytest`), green on Linux, on macOS on Apple silicon,
+> and in Docker.
 
 ## Run it
 
