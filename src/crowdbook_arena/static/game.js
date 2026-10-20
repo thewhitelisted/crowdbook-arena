@@ -304,6 +304,7 @@ function fromSnapshot(s) {
     orders: new Map((s.orders || []).map((o) => [o.id, o])), bids: s.bids || [], asks: s.asks || [],
     last: s.last_trade, trades: (s.trades || []).slice(-60).reverse(), ended: s.ended,
     reference: s.reference_price || 0, initialCash: s.initial_cash || 0,
+    series: new Map((s.series || []).map(([sec, p]) => [sec, p])), myFills: (s.my_fills || []).slice(),
   };
 }
 
@@ -326,6 +327,7 @@ function apply(s, m) {
       s.fees += m.fee / 1000;
       const o = s.orders.get(m.id);
       if (o) { if (m.leaves > 0) o.leaves = m.leaves; else s.orders.delete(m.id); }
+      s.myFills.push([m.time, m.side, m.price, m.quantity]);
       break;
     }
     case "cancelled": s.orders.delete(m.id); break;
@@ -336,6 +338,7 @@ function apply(s, m) {
       s.last = m.price;
       s.trades.unshift({ time: m.time, price: m.price, quantity: m.quantity, aggressor: m.aggressor });
       if (s.trades.length > 60) s.trades.pop();
+      s.series.set(Math.floor(m.time / SEC), m.price);
       break;
     case "top":
       s.bids = mergeTop(s.bids, m.bid);
@@ -398,10 +401,74 @@ function render() {
   $("clock-bar").style.width = `${d ? Math.min(100, (100 * t) / d) : 0}%`;
   renderLadder(s);
   renderOrders(s);
+  renderChart(s);
   $("tape").innerHTML = s.trades.slice(0, 40).map((tr) =>
     `<tr><td class="dim">${clock(tr.time / SEC)}</td><td class="num ${tr.aggressor === "buy" ? "pos" : "neg"}">${tr.price}</td>` +
     `<td class="num">${tr.quantity}</td></tr>`).join("");
   if (!$("price").value && s.bids.length) $("price").value = s.bids[0][0];
+}
+
+// The price chart: the last trade in each simulated second over the round, with the seat's own
+// fills marked. Drawn on a canvas, at the screen's pixel density.
+function renderChart(s) {
+  const canvas = $("chart");
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const css = getComputedStyle(document.documentElement);
+  const color = (name) => css.getPropertyValue(name).trim();
+  const points = [...s.series.entries()].sort((a, b) => a[0] - b[0]);
+  const prices = points.map((p) => p[1]).concat(s.myFills.map((f) => f[2]));
+  if (!prices.length) {
+    ctx.fillStyle = color("--dim");
+    ctx.font = "12px system-ui";
+    ctx.fillText("No trades yet", 8, h / 2);
+    return;
+  }
+  const left = 46, right = 8, top = 8, bottom = 18;
+  const lo = Math.min(...prices) - 1, hi = Math.max(...prices) + 1;
+  const span = Math.max(1, s.duration / SEC);
+  const x = (sec) => left + ((w - left - right) * sec) / span;
+  const y = (p) => top + ((h - top - bottom) * (hi - p)) / (hi - lo);
+  // Axes: the price range and the clock.
+  ctx.strokeStyle = color("--line");
+  ctx.fillStyle = color("--dim");
+  ctx.font = "11px ui-monospace, monospace";
+  ctx.lineWidth = 1;
+  const step = Math.max(1, Math.ceil((hi - lo) / 4));
+  for (let p = Math.ceil(lo / step) * step; p <= hi; p += step) {
+    ctx.beginPath(); ctx.moveTo(left, y(p) + 0.5); ctx.lineTo(w - right, y(p) + 0.5); ctx.stroke();
+    ctx.fillText(String(p), 2, y(p) + 4);
+  }
+  ctx.fillText("0:00", left, h - 4);
+  const end = clock(span);
+  ctx.fillText(end, w - right - ctx.measureText(end).width, h - 4);
+  // The price, as steps from one second's last trade to the next.
+  ctx.strokeStyle = color("--accent");
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  points.forEach(([sec, p], i) => {
+    if (i === 0) ctx.moveTo(x(sec), y(p));
+    else { ctx.lineTo(x(sec), y(points[i - 1][1])); ctx.lineTo(x(sec), y(p)); }
+  });
+  if (points.length) ctx.lineTo(x(Math.min(span, s.time / SEC)), y(points[points.length - 1][1]));
+  ctx.stroke();
+  // The seat's own fills: a triangle up for each buy, down for each sell.
+  for (const [t, side, p] of s.myFills) {
+    const cx = x(t / SEC), cy = y(p), r = 5;
+    ctx.fillStyle = color(side === "buy" ? "--bid" : "--ask");
+    ctx.beginPath();
+    if (side === "buy") { ctx.moveTo(cx, cy - r); ctx.lineTo(cx - r, cy + r); ctx.lineTo(cx + r, cy + r); }
+    else { ctx.moveTo(cx, cy + r); ctx.lineTo(cx - r, cy - r); ctx.lineTo(cx + r, cy - r); }
+    ctx.fill();
+  }
 }
 
 function clock(sec) {

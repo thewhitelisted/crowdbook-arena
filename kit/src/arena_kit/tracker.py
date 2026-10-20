@@ -11,6 +11,8 @@ from typing import Any
 from .bot import Fill, State, Trade
 
 FEE_UNITS = 1000  # fees and scores are sent in thousandths of a tick-lot
+SECOND = 1_000_000_000
+MAX_CHART_FILLS = 5000
 
 
 class SeatTracker:
@@ -28,6 +30,8 @@ class SeatTracker:
         self.position = 0
         self.fees = 0.0       # tick-lots
         self.traded = 0       # lots bought and sold
+        self.series: dict[int, int] = {}  # simulated second -> the last trade price in it
+        self.my_fills: list[list[Any]] = []  # [time, side, price, quantity], for the chart
         self.orders: dict[int, dict[str, Any]] = {}  # live orders the exchange has accepted
         self.pending: dict[int, dict[str, Any]] = {}  # new orders sent and not yet answered
         self.bids: list[tuple[int, int]] = []
@@ -86,6 +90,8 @@ class SeatTracker:
             self.fees += m["fee"] / FEE_UNITS
             self.traded += qty
             self.fills.append(Fill(m["time"], m["side"], price, qty, m["fee"] / FEE_UNITS))
+            if len(self.my_fills) < MAX_CHART_FILLS:
+                self.my_fills.append([m["time"], m["side"], price, qty])
             self.pending.pop(m["id"], None)
             if m["leaves"] > 0:
                 if m["id"] in self.orders:
@@ -98,6 +104,7 @@ class SeatTracker:
         elif kind == "trade":
             self.last_trade = m["price"]
             self.trades.append(Trade(m["time"], m["price"], m["quantity"], m["aggressor"]))
+            self.series[m["time"] // SECOND] = m["price"]
         elif kind == "top":
             # Only what depth does not already say: keep the deeper book when it agrees.
             bid, ask = m.get("bid"), m.get("ask")
@@ -144,6 +151,7 @@ class SeatTracker:
             "initial_cash": self._initial_cash, "initial_position": self._initial_position,
             "bids": self.bids, "asks": self.asks, "last_trade": self.last_trade,
             "trades": [t.__dict__ for t in self.trades], "ended": self.ended,
+            "series": sorted(self.series.items()), "my_fills": self.my_fills,
         }
 
     def load(self, snap: dict[str, Any]) -> None:
@@ -166,6 +174,8 @@ class SeatTracker:
         self.last_trade = snap["last_trade"]
         self.trades.clear()
         self.trades.extend(Trade(**t) for t in snap["trades"])
+        self.series = {int(sec): price for sec, price in snap.get("series", [])}
+        self.my_fills = [list(f) for f in snap.get("my_fills", [])]
         self.ended = snap["ended"]
 
 
