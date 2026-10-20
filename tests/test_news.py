@@ -70,11 +70,16 @@ def test_offline_news_comes_at_the_first_turn_after_it_is_out():
     assert 5 * S <= seen[0][1] < 6 * S + 10**8 and 8_250_000_000 <= seen[1][1] < 9_300_000_000
 
 
-def test_news_market_draws_its_jumps_when_crowdbook_can_take_them():
-    if engine_has_value_path():
-        assert NEWS.jumps(3, 600) and "path = [" in NEWS.scenario(3, 60)
-    else:
-        assert NEWS.jumps(3, 600) == [] and "jump_rate" in NEWS.scenario(3, 60)
+def test_the_news_market_follows_the_arenas_path():
+    assert engine_has_value_path()  # crowdbook 0.14 or later, as pinned
+    path, jumps = NEWS._walk(3, 60)
+    assert jumps and NEWS.jumps(3, 60) == jumps and "path = [" in NEWS.scenario(3, 60)
+    # The engine's true value is the path, so a headline tells of a jump players really meet.
+    m = SteppedMarket(NEWS.scenario(3, 60), 3)
+    while not m.done:
+        t = m.state().time
+        assert abs(float(m._info["value"][0]) - path[int(t / 250_000_000 + 1e-9)][1]) < 1e-3
+        m.step(None)
 
 
 @pytest.fixture
@@ -141,3 +146,64 @@ def test_news_setting_is_checked(newsy):
     r = newsy.post(f"/api/games/{game['code']}/rounds",
                    {"kind": "live", "market": "newsy", "news": "soon"}, game["token"])
     assert r.status_code == 400
+
+
+def test_the_news_market_end_to_end(server):
+    """Real headlines in the news market: lockstep equals offline, and live screens get them on
+    the market's clock, with the experts."""
+    game = server.new_game("alice")
+    code = game["code"]
+    bot = server.join(code, "reader", "bot")
+    trader = NewsTrader()
+    expected = headlines(NEWS, 5, 120, "instant")
+    assert len(expected) >= 1
+
+    async def lockstep():
+        task = asyncio.create_task(play(trader, server.url, bot["token"], rounds=1))
+        await asyncio.sleep(0.3)
+        r = await asyncio.to_thread(server.post, f"/api/games/{code}/rounds",
+                                    {"kind": "lockstep", "market": "news", "duration_s": 120,
+                                     "seed": 5, "news": "instant"}, game["token"])
+        assert r.status_code == 201, r.text
+        return await asyncio.wait_for(task, 60)
+
+    (res,) = asyncio.run(lockstep())
+    offline = NewsTrader()
+    local = run_local(offline, "news", seed=5, duration_s=120, news="instant")
+    assert [h for _, h, _ in trader.heard] == [n.headline for n in expected]
+    assert trader.heard == offline.heard
+    assert res["result"]["score"] == pytest.approx(local.score)
+
+    async def live():
+        ws = await connect(server, game["token"])
+        r = await asyncio.to_thread(server.post, f"/api/games/{code}/rounds",
+                                    {"kind": "live", "market": "news", "duration_s": 60,
+                                     "seed": 3, "speed": 15}, game["token"])
+        assert r.status_code == 201, r.text
+        first = await recv_until(ws, lambda m: m["type"] == "news", timeout=30)
+        await asyncio.to_thread(server.post, f"/api/games/{code}/rounds/stop", {},
+                                game["token"])
+        await recv_until(ws, lambda m: m["type"] == "round_ended")
+        await ws.close()
+        return first
+
+    first = live()
+    first = asyncio.run(first)
+    jump = NEWS.jumps(3, 60)[0]
+    assert first["time"] == jump.time + 2 * S  # with the experts, the default
+    assert first["headline"] == headline(jump.change)
+
+
+def test_the_bankroll_holds_in_the_news_market():
+    class AllIn(Bot):
+        def __init__(self):
+            self.biggest = 0
+
+        def on_turn(self, state):
+            self.biggest = max(self.biggest, abs(state.position))
+            take = sum(20 if n.change > 0 else -20 for n in state.news)
+            return Quote(take=take) if take else None
+
+    bot = AllIn()
+    run_local(bot, "news", seed=3, duration_s=300, news="instant", bankroll=300)
+    assert bot.biggest <= 3

@@ -85,7 +85,8 @@ def engine_has_value_path() -> bool:
     if not _VALUE_PATH:
         import crowdbook_learn
 
-        probe = 'duration = "2s"\nreference_price = 100\n[fundamental]\npath = [[0, 100.0]]\n'
+        probe = ('duration = "2s"\nreference_price = 100\n[fundamental]\npath = [[0, 100.0]]\n'
+                 '[[agents]]\ntype = "zero_intelligence"\ncount = 1\n')
         try:
             crowdbook_learn.Pool.from_text(probe, markets=1, threads=1)
             _VALUE_PATH.append(True)
