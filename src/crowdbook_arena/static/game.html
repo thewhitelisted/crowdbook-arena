@@ -29,7 +29,7 @@
     <h2>Players</h2>
     <ul class="players" id="players"></ul>
     <div id="host-controls" class="hidden" style="margin-top:12px">
-      <div class="row">
+      <div class="row setup">
         <label>Round <select id="round-kind">
           <option value="live">Live: everyone trades one market on the clock</option>
           <option value="lockstep">Lockstep: each bot trades its own copy, turn by turn</option>
@@ -51,14 +51,16 @@
         </select></label>
         <label class="lockstep-only hidden">Turn timeout (ms) <input type="number" id="turn-timeout" value="2000" min="50" max="60000" step="100"></label>
         <button class="primary" id="start-round">Start the round</button>
-        <button id="stop-round" class="hidden">End the round now</button>
       </div>
+      <button id="stop-round" class="hidden">End the round now</button>
+      <div class="setup">
       <div class="dim" id="market-description"></div>
       <details class="market-only" id="market-briefing-box"><summary class="dim">What players are told</summary>
         <div class="briefing" id="market-briefing"></div></details>
+      </div>
       <div class="error" id="host-error"></div>
     </div>
-    <p class="dim" id="bot-hint">Bots join with the kit:
+    <p class="dim setup" id="bot-hint">Bots join with the kit:
       <code id="bot-command"></code></p>
   </section>
 
@@ -76,63 +78,68 @@
   </section>
 
   <section class="hidden" id="trading">
-    <div class="trade-grid">
-      <div class="panel">
-        <h2>Book <span class="dim" id="round-title"></span></h2>
-        <table class="ladder"><tbody id="ladder"></tbody></table>
-        <p class="dim" style="font-size:12px">Click a bid size to bid there, an offer size to
-          offer there; click your own order (yellow) to cancel it.</p>
+    <div class="panel status-strip">
+      <div class="round-clock">
+        <div><strong id="round-title"></strong> <span class="dim" id="spectating"></span></div>
+        <span id="clock-text" class="num"></span>
+        <div class="clock"><div id="clock-bar"></div></div>
       </div>
-      <div style="display:grid;gap:16px;align-content:start">
-        <div class="panel">
-          <div class="row" style="justify-content:space-between;margin:0">
-            <span id="clock-text" class="num"></span><span class="dim" id="spectating"></span>
-          </div>
-          <div class="clock"><div id="clock-bar"></div></div>
-          <div class="stats" style="margin-top:10px">
-            <div class="stat"><div class="k">Position</div><div class="v" id="position">0</div></div>
-            <div class="stat"><div class="k">P&amp;L</div><div class="v" id="pnl">0</div></div>
-            <div class="stat"><div class="k">Equity</div><div class="v" id="cash">0</div></div>
-            <div class="stat"><div class="k">Fees</div><div class="v" id="fees">0</div></div>
-          </div>
-          <p class="dim" style="font-size:12px;margin:6px 0 0" id="limits"></p>
+      <div class="stats">
+        <div class="stat"><div class="k">Position (lots)</div><div class="v" id="position">0</div></div>
+        <div class="stat big"><div class="k">P&amp;L this round</div><div class="v" id="pnl">0</div></div>
+        <div class="stat"><div class="k">Equity</div><div class="v" id="cash">0</div></div>
+        <div class="stat"><div class="k">Fees</div><div class="v" id="fees">0</div></div>
+      </div>
+      <p class="dim limits" id="limits"></p>
+    </div>
+    <div class="trade-grid">
+      <div class="panel book">
+        <h2>Order book</h2>
+        <table class="ladder"><tbody id="ladder"></tbody></table>
+        <p class="dim hint">Click a <span class="pos">bid size</span> to place a bid at that price,
+          an <span class="neg">offer size</span> to place an offer; click your own order
+          (<span style="color:var(--mine)">yellow</span>) to cancel it.</p>
+      </div>
+      <div class="panel chart-panel">
+        <div class="row" style="justify-content:space-between;margin:0 0 6px">
+          <h2 style="margin:0">Price <span class="dim" style="text-transform:none;letter-spacing:0">mid
+            of the market; <span class="pos">▲</span> your buys, <span class="neg">▼</span> your sells</span></h2>
+          <div class="row ranges" id="chart-ranges" style="margin:0"></div>
         </div>
-        <div class="panel">
-          <div class="row" style="justify-content:space-between;margin:0 0 6px">
-            <h2 style="margin:0">Price <span class="dim" style="text-transform:none;letter-spacing:0">the
-              middle of the market; <span class="pos">▲</span> your buys, <span class="neg">▼</span> your sells</span></h2>
-            <div class="row ranges" id="chart-ranges" style="margin:0"></div>
-          </div>
-          <div style="position:relative">
-            <canvas id="chart" style="width:100%;height:220px;display:block;cursor:crosshair"></canvas>
-            <div id="chart-tip" class="chart-tip hidden"></div>
-          </div>
+        <div style="position:relative">
+          <canvas id="chart" style="width:100%;height:300px;display:block;cursor:crosshair"></canvas>
+          <div id="chart-tip" class="chart-tip hidden"></div>
         </div>
-        <div class="panel hidden" id="news-panel">
-          <h2>News</h2>
-          <div class="tape" style="max-height:120px"><table><tbody id="news"></tbody></table></div>
+      </div>
+      <div class="panel ticket">
+        <h2>Trade</h2>
+        <div class="ticket-fields">
+          <label>Lots <input type="number" id="qty" value="5" min="1"></label>
+          <label>Price $ <input type="number" id="price" step="0.01"></label>
         </div>
-        <div class="panel">
-          <h2>Order</h2>
-          <div class="row">
-            <label>Qty <input type="number" id="qty" value="5" min="1"></label>
-            <label>Price $ <input type="number" id="price" step="0.01"></label>
-          </div>
-          <div class="row">
-            <button class="buy" id="buy-limit">Bid</button>
-            <button class="sell" id="sell-limit">Offer</button>
-            <button class="buy" id="buy-market">Buy market</button>
-            <button class="sell" id="sell-market">Sell market</button>
-            <button id="cancel-all">Cancel all</button>
-          </div>
-          <div class="error" id="order-error"></div>
-          <table><thead><tr><th>Side</th><th class="num">Price</th><th class="num">Open</th><th></th></tr></thead>
-            <tbody id="orders"></tbody></table>
+        <div class="ticket-buttons">
+          <button class="buy" id="buy-limit" title="Rest an order to buy at your price">Bid at price</button>
+          <button class="sell" id="sell-limit" title="Rest an order to sell at your price">Offer at price</button>
+          <button class="buy" id="buy-market" title="Buy now from the best offers">Buy now</button>
+          <button class="sell" id="sell-market" title="Sell now to the best bids">Sell now</button>
         </div>
-        <div class="panel">
-          <h2>Trades</h2>
-          <div class="tape"><table><tbody id="tape"></tbody></table></div>
+        <div class="error" id="order-error"></div>
+        <div class="row" style="justify-content:space-between;margin:6px 0 4px">
+          <h2 style="margin:0">Your orders</h2>
+          <button id="cancel-all" class="small">Cancel all</button>
         </div>
+        <table><thead><tr><th>Side</th><th class="num">Price</th><th class="num">Open</th><th></th></tr></thead>
+          <tbody id="orders"></tbody></table>
+      </div>
+    </div>
+    <div class="lower-grid">
+      <div class="panel">
+        <h2>Trades</h2>
+        <div class="tape"><table><tbody id="tape"></tbody></table></div>
+      </div>
+      <div class="panel hidden" id="news-panel">
+        <h2>News</h2>
+        <div class="tape"><table><tbody id="news"></tbody></table></div>
       </div>
     </div>
   </section>
@@ -166,8 +173,9 @@
   </section>
 
   <section class="panel hidden" id="bot-panel">
-    <h2>Your bot <span class="dim" id="bot-phase"></span></h2>
-    <p class="dim" style="font-size:12px;margin-top:0">Paste the bot file you test with
+    <details id="bot-details"><summary class="section-summary">Your bot <span class="dim">(optional:
+      run a Python bot from this tab)</span> <span class="dim" id="bot-phase"></span></summary>
+    <p class="dim" style="font-size:12px">Paste the bot file you test with
       <code>arena-kit test</code> and deploy it: it joins this game as a bot player and trades from
       its own seat. It runs in this tab, in Python in your browser, never on the server, so keep the
       tab open: closing it disconnects the bot, as if its connection dropped. A reload carries on.</p>
@@ -187,8 +195,9 @@
       Its fills show on the price chart as hollow triangles.</p>
     <div class="bot-grid">
       <div><h2>Fills</h2><div class="tape" style="max-height:180px"><table><tbody id="bot-fills"></tbody></table></div></div>
-      <div><h2>Output</h2><div class="tape bot-output" id="bot-output"></div></div>
+      <div><h2>Output</h2><div class="tape bot-output" id="bot-output"><div class="dim">Nothing printed yet.</div></div></div>
     </div>
+    </details>
   </section>
 
   <section class="panel hidden" id="results">

@@ -34,7 +34,7 @@ export function botFills(roundId) { return round === roundId ? fills : []; }
 export function setupBot(gameCode) {
   code = gameCode;
   const s = stored();
-  if (s.source) $("bot-code").value = s.source;
+  if (s.source) { $("bot-code").value = s.source; $("bot-details").open = true; }
   if (s.name) $("bot-name").value = s.name;
   $("bot-deploy").onclick = () => deploy().catch((err) => fail(err.message));
   $("bot-stop").onclick = () => { stop("stopped"); store({ running: false }); };

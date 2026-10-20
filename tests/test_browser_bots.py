@@ -83,6 +83,7 @@ def _open(page, server, game):
     page.evaluate(f"sessionStorage.setItem('arena:{game['code']}', '{game['token']}')")
     page.goto(f"{server.url}/g/{game['code']}")
     page.wait_for_selector("#bot-panel:not(.hidden)")
+    page.click("#bot-details summary")  # the panel starts closed: it is optional
 
 
 def _phase(page, text, timeout=60000):

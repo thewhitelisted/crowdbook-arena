@@ -176,9 +176,12 @@ Public market kinds come from the kit (`arena-kit markets`):
 
 | Kind | Asset | What it is |
 |---|---|---|
-| `calm` | Sea Salt | A calm asset: its fair value drifts slowly, with no news. |
-| `news` | Pearls | Mostly quiet, but its fair value jumps when news breaks. The well-informed hear first, the crowd later. Players can get a headline too (see below). |
-| `trending` | Coral | Volatile and trend-prone: moves overshoot and come back. |
+| `calm` | Sea Salt | Calm but always moving: small, steady drift and noise, no news. |
+| `news` | Pearls | Quiet stretches, then sharp jumps when news breaks, big enough to matter. The well-informed hear first, the crowd later. Players can get a headline too (see below). |
+| `trending` | Coral | Volatile and trend-prone: the fair value runs one way for a while, then turns, and moves overshoot and come back. |
+
+Every kind has a pack of well-informed traders who keep the price near the fair value and pick off
+stale quotes, so quoting blindly costs money; a careful maker can still profit in the calmer ones.
 
 Screens show the asset's name; bots and `arena-kit test --market` use the kind.
 
