@@ -14,8 +14,8 @@ import numpy as np
 
 import crowdbook_learn
 
-from .bot import Bot, Fill, Quote, State, Trade
-from .markets import MarketKind, public_kind
+from .bot import Bot, Fill, News, Quote, State, Trade
+from .markets import MarketKind, headlines, public_kind
 
 _S = {name: i for i, name in enumerate(crowdbook_learn.STATE_NAMES)}
 _TRADE, _FILL = 1, 4
@@ -24,17 +24,24 @@ _TRADE, _FILL = 1, 4
 class SteppedMarket:
     """One market from a scenario's text, stepped by `step` until `done`."""
 
-    def __init__(self, scenario: str, seed: int):
+    def __init__(self, scenario: str, seed: int, news: list[News] | tuple = ()):
         self.seed = int(seed)
         self._pool = crowdbook_learn.Pool.from_text(scenario, markets=1, threads=1)
         self._obs, self._info = self._pool.reset(seeds=[self.seed])
         self.done = False
         self.turns = 0
+        self._news = sorted(news, key=lambda n: n.time)  # headlines, by when they come out
+        self._news_given = 0
 
     def state(self) -> State:
         """The seat's state at the current decision, with what it heard since the last one."""
         obs = self._obs
         s = obs["state"][0]
+        news = []
+        while (self._news_given < len(self._news)
+               and self._news[self._news_given].time <= int(s[_S["time"]])):
+            news.append(self._news[self._news_given])
+            self._news_given += 1
         # Everything heard since the last decision, the latest rows kept if there were more.
         count = min(int(obs["counts"][0][0]), len(obs["events"][0]))
         rows = obs["events"][0][:count]
@@ -65,7 +72,8 @@ class SteppedMarket:
             bids=bids, asks=asks, my_bid=my_bid, my_ask=my_ask,
             max_position=int(s[_S["max_position"]]),
             max_order_quantity=int(s[_S["max_order_quantity"]]),
-            reference_price=int(s[_S["reference_price"]]), trades=trades, fills=fills)
+            reference_price=int(s[_S["reference_price"]]), trades=trades, fills=fills,
+            news=news)
 
     def step(self, quote: Quote | None) -> None:
         """Places the quote, or leaves the seat's orders as they are for None, and runs on to
@@ -115,11 +123,13 @@ class LocalResult:
 
 
 def run_local(bot: Bot, market: str | MarketKind = "calm", seed: int = 1,
-              duration_s: int = 300) -> LocalResult:
+              duration_s: int = 300, news: str = "experts") -> LocalResult:
     """Runs `bot` in a public market kind (or any `MarketKind`) on this machine, as a lockstep
-    round would run it on the server."""
+    round would run it on the server. `news` is when headlines come, in markets with news:
+    instant, experts, crowd or off, as the host of a round chooses."""
     kind = public_kind(market) if isinstance(market, str) else market
-    m = SteppedMarket(kind.scenario(seed, duration_s), seed)
+    m = SteppedMarket(kind.scenario(seed, duration_s), seed,
+                      headlines(kind, seed, duration_s, news))
     first = m.state()
     bot.on_start({"market": kind.name, "seed": seed, "duration_s": duration_s, "mode": "local",
                   "max_position": first.max_position,

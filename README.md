@@ -129,8 +129,21 @@ Public market kinds come from the kit (`arena-kit markets`):
 | Kind | What it is |
 |---|---|
 | `calm` | A few trades a second around a slowly wandering true value. |
-| `news` | The true value jumps about once a minute. Experts see the jump early, the crowd late. |
+| `news` | The true value jumps about once a minute. Experts see the jump early, the crowd late. Players can get a headline too (see below). |
 | `trending` | A livelier value and many trend followers, so prices overshoot. |
+
+In the `news` market each jump in the true value comes with a headline, such as "Good news: value
+up about 8". The host chooses when players see it:
+- at once;
+- with the experts, about 2 seconds late (the default);
+- with the crowd, about 30 seconds late;
+- never.
+
+Screens show headlines in a news panel and on the price chart. Bots get them in `State.news`, at
+the same moments live, in lockstep and offline (`arena-kit test --news`). The arena draws the news
+market's value path itself, so that it knows each jump, and gives it to crowdbook as a recorded
+path. That needs crowdbook 0.14 or later. With 0.13, the news market's jumps come from crowdbook
+itself and there are no headlines.
 
 A Python package installed on the server can add kinds of its own through the
 `crowdbook_arena.market_kinds` entry point group (see `src/crowdbook_arena/kinds.py`). Those kinds

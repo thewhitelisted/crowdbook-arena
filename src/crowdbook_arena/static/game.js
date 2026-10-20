@@ -88,6 +88,12 @@ function handle(msg) {
     case "round_started":
       $("results").classList.add("hidden");
       break;
+    case "news":
+      if (msg.round === roundId && seat) {
+        seat.news.push({ time: msg.time, headline: msg.headline, change: msg.change });
+        scheduleRender();
+      }
+      break;
     case "lockstep_progress":
       showLockstep(msg);
       break;
@@ -143,6 +149,7 @@ function setGame(g) {
     $("market").innerHTML = g.markets.map((m) =>
       `<option value="${esc(m.name)}">${esc(m.title)}</option>`).join("");
     describeMarket();
+    showKindFields();
   }
   $("start-round").classList.toggle("hidden", !!g.current);
   $("stop-round").classList.toggle("hidden", !g.current);
@@ -179,8 +186,10 @@ function showLockstep(p) {
 
 function showKindFields() {
   const kind = $("round-kind").value;
+  const market = game && game.markets.find((m) => m.name === $("market").value);
   const show = { "live-only": kind === "live", "lockstep-only": kind === "lockstep",
-    "challenge-only": kind === "challenge", "market-only": kind !== "challenge" };
+    "challenge-only": kind === "challenge", "market-only": kind !== "challenge",
+    "news-only": kind !== "challenge" && !!(market && market.news) };
   for (const [cls, on] of Object.entries(show)) {
     for (const el of document.querySelectorAll(`.${cls}`)) el.classList.toggle("hidden", !on);
   }
@@ -272,7 +281,7 @@ function describeMarket() {
   const m = game.markets.find((x) => x.name === $("market").value);
   $("market-description").textContent = m ? m.description : "";
 }
-$("market").onchange = describeMarket;
+$("market").onchange = () => { describeMarket(); showKindFields(); };
 
 $("start-round").onclick = async () => {
   $("host-error").textContent = "";
@@ -283,6 +292,8 @@ $("start-round").onclick = async () => {
     if (kind === "lockstep") spec.turn_timeout_ms = parseInt($("turn-timeout").value, 10);
     if (kind === "challenge") spec.challenge = $("challenge-kind").value;
     else spec.market = $("market").value;
+    const market = game.markets.find((m) => m.name === spec.market);
+    if (kind !== "challenge" && market && market.news) spec.news = $("news-delay").value;
     await post(`/api/games/${code}/rounds`, spec, token);
   } catch (err) { $("host-error").textContent = err.message; }
 };
@@ -305,6 +316,7 @@ function fromSnapshot(s) {
     last: s.last_trade, trades: (s.trades || []).slice(-60).reverse(), ended: s.ended,
     reference: s.reference_price || 0, initialCash: s.initial_cash || 0,
     series: new Map((s.series || []).map(([sec, p]) => [sec, p])), myFills: (s.my_fills || []).slice(),
+    news: (s.news || []).slice(),
   };
 }
 
@@ -402,6 +414,10 @@ function render() {
   renderLadder(s);
   renderOrders(s);
   renderChart(s);
+  $("news-panel").classList.toggle("hidden", !(game && game.current && game.current.config.news));
+  $("news").innerHTML = s.news.slice().reverse().map((n) =>
+    `<tr><td class="dim">${clock(n.time / SEC)}</td><td class="${n.change > 0 ? "pos" : n.change < 0 ? "neg" : ""}">${esc(n.headline)}</td></tr>`).join("")
+    || '<tr><td class="dim">No news yet.</td></tr>';
   $("tape").innerHTML = s.trades.slice(0, 40).map((tr) =>
     `<tr><td class="dim">${clock(tr.time / SEC)}</td><td class="num ${tr.aggressor === "buy" ? "pos" : "neg"}">${tr.price}</td>` +
     `<td class="num">${tr.quantity}</td></tr>`).join("");
@@ -460,6 +476,14 @@ function renderChart(s) {
   });
   if (points.length) ctx.lineTo(x(Math.min(span, s.time / SEC)), y(points[points.length - 1][1]));
   ctx.stroke();
+  // Headlines, as dashed lines at the moment they came out.
+  ctx.setLineDash([3, 3]);
+  ctx.lineWidth = 1;
+  for (const n of s.news) {
+    ctx.strokeStyle = color(n.change > 0 ? "--bid" : n.change < 0 ? "--ask" : "--dim");
+    ctx.beginPath(); ctx.moveTo(x(n.time / SEC) + 0.5, top); ctx.lineTo(x(n.time / SEC) + 0.5, h - bottom); ctx.stroke();
+  }
+  ctx.setLineDash([]);
   // The seat's own fills: a triangle up for each buy, down for each sell.
   for (const [t, side, p] of s.myFills) {
     const cx = x(t / SEC), cy = y(p), r = 5;

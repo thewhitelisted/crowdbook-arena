@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from arena_kit.bot import News
 from arena_kit.tracker import FEE_UNITS, SeatTracker
 
 from .auth import new_token
@@ -94,7 +95,9 @@ class LiveRound:
                  player_ids: list[int], crowdbook: str, work_dir: str, send: Send,
                  on_end: Callable[[dict[int, tuple[float, dict[str, Any]]]], Awaitable[None]],
                  rate_limit: int = 50, feed_interval_ms: int = 100,
-                 watch: Callable[[dict[str, Any]], Awaitable[None]] | None = None):
+                 watch: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+                 news: list[News] | tuple = (),
+                 announce: Callable[[dict[str, Any]], Awaitable[None]] | None = None):
         self.round_id = round_id
         self.seed = seed
         self.duration_s = duration_s
@@ -107,6 +110,9 @@ class LiveRound:
         self.seats = {pid: Seat(pid, f"p{pid}", new_token()) for pid in player_ids}
         self._send = send
         self._watch_feed = watch  # the market's public messages, for players without a seat
+        self._news = sorted(news, key=lambda n: n.time)  # headlines, by when they come out
+        self.published: list[dict[str, Any]] = []
+        self._announce = announce
         self._on_end = on_end
         self._proc: asyncio.subprocess.Process | None = None
         self._tokens: Path | None = None
@@ -186,9 +192,11 @@ class LiveRound:
                 seat.tracker.apply(msg)
                 await self._send(seat.player_id, {"type": "live", "round": self.round_id,
                                                   "m": msg})
-                if (self._watch_feed and seat is next(iter(self.seats.values()))
-                        and msg.get("type") in _PUBLIC):
+                first = seat is next(iter(self.seats.values()))
+                if self._watch_feed and first and msg.get("type") in _PUBLIC:
                     await self._watch_feed({"type": "live", "round": self.round_id, "m": msg})
+                if first:
+                    await self._publish_news(seat.tracker.time)
                 if msg.get("type") == "end":
                     break
                 if msg.get("type") == "error" and msg.get("fatal"):
@@ -273,9 +281,20 @@ class LiveRound:
             except (ConnectionError, RuntimeError):
                 return
 
+    async def _publish_news(self, now: int) -> None:
+        """Headlines whose time has come on the market's clock, to everyone in the game."""
+        while len(self.published) < len(self._news) and self._news[len(self.published)].time <= now:
+            n = self._news[len(self.published)]
+            item = {"time": n.time, "headline": n.headline, "change": n.change}
+            self.published.append(item)
+            if self._announce:
+                await self._announce({"type": "news", "round": self.round_id, **item})
+
     def snapshot(self, player_id: int) -> dict[str, Any] | None:
         seat = self.seats.get(player_id)
-        return seat.tracker.snapshot() if seat and seat.tracker else None
+        if not (seat and seat.tracker):
+            return None
+        return {**seat.tracker.snapshot(), "news": list(self.published)}
 
     def any_snapshot(self) -> dict[str, Any] | None:
         """The market as one seat sees it, for a player without a seat of their own."""
@@ -283,7 +302,7 @@ class LiveRound:
             if seat.tracker:
                 snap = seat.tracker.snapshot()
                 return {**snap, "cash": 0, "position": 0, "fees": 0, "traded": 0, "orders": [],
-                        "my_fills": [],
+                        "my_fills": [], "news": list(self.published),
                         "pending": [], "initial_cash": 0, "initial_position": 0}
         return None
 
