@@ -109,13 +109,35 @@ Players can change their answer until the challenge closes, on its timer or when
 Only then are the scores and the best answer shown. A score puts the answer's worth on a scale
 from doing nothing, 0, to the best answer, 100, held between -100 and 100.
 
+## Money
+
+Every player has one bankroll for the whole game, the same for everyone. The host sets it when
+starting the game, $10,000 unless changed. A tick is a cent, so prices and money show in dollars:
+a price of 10,000 ticks is $100.00 a lot.
+
+Each live or lockstep round adds its P&L after fees to the balance. Challenge rounds score out of
+100 and leave money alone.
+
+**Buying power.** Counting your open orders as if they all filled, you may hold at most as many
+lots either way as your equity buys at the order's price. Equity is your balance at the start of
+the round, plus the round's cash and position at the middle of the market, less fees. A long
+position is paid for in full, and a short one needs the same amount set aside. The position limit
+of 100 lots still applies on top.
+
+Orders beyond buying power are refused with a message. A player whose equity does not cover a
+single lot is bust: they can watch and close positions, but cannot open any.
+
+The same rule holds for people and bots, in live rounds, in lockstep rounds, and offline:
+`run_local(..., bankroll=10_000)` and `arena-kit test --bankroll`. In lockstep and offline it cuts
+a bot's quotes down to what it can afford.
+
 ## Leaderboards
 
 Each game has four leaderboards:
 - live trading (the owner's "manual" board);
 - algorithmic (lockstep rounds);
 - challenges;
-- overall.
+- overall, which ranks by balance.
 
 A market round's scores are in tick-lots, which differ from one market to the next, so each market
 round counts by rank. In a round of n players, first place gets 100 points and last gets 0, with

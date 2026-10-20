@@ -12,6 +12,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from . import money
+from .money import DEFAULT_BANKROLL
+
 Level = tuple[int, int]  # (price, quantity)
 
 
@@ -127,12 +130,25 @@ class State:
     trades: list[Trade] = field(default_factory=list)  # since the last turn
     fills: list[Fill] = field(default_factory=list)    # this seat's, since the last turn
     news: list[News] = field(default_factory=list)     # headlines since the last turn
+    balance: float = DEFAULT_BANKROLL  # tick-lots (cents) the seat started the round with
 
     @property
     def mid(self) -> float | None:
         if self.bid and self.ask:
             return (self.bid[0] + self.ask[0]) / 2
         return None
+
+    @property
+    def equity(self) -> float:
+        """The balance, plus the round's cash and position at the middle of the market, less
+        fees: what buying power is measured against (arena_kit.money)."""
+        return money.equity(self.balance, self.cash, self.fees, self.position,
+                            money.mark(self.bid and self.bid[0], self.ask and self.ask[0],
+                                       self.last_trade, self.reference_price))
+
+    def room(self, side: str, price: float, open_lots: int = 0) -> int:
+        """How many more lots this seat may bid ("buy") or offer ("sell") at `price`."""
+        return money.room(side, self.position, open_lots, self.equity, price)
 
     def pnl(self, mark: float | None = None) -> float:
         """Cash plus the position at `mark` (the mid, else the last trade), less fees."""

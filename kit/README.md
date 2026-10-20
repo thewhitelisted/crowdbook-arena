@@ -47,6 +47,11 @@ The `Quote` holds:
 
 Returning `None` instead of a `Quote` leaves everything as it is.
 
+Money is in tick-lots, and a tick is a cent. `state.balance` is what the bot started the round
+with, and `state.equity` is that plus the round's P&L. `state.room("buy", price)` is how many lots
+it can still afford to bid at a price. Quotes beyond buying power are cut to what the bot can
+afford, offline and in a game alike; the arena's README explains the rule.
+
 Prices are in ticks, quantities in lots, and cash and P&L in tick-lots. `on_start(info)` and
 `on_end(result)` are optional.
 

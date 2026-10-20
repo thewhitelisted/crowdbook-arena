@@ -9,6 +9,7 @@ from typing import Any
 
 from starlette.websockets import WebSocket
 
+from arena_kit import money
 from arena_kit.markets import NEWS_DELAYS, MarketKind, has_news, headlines
 
 from .auth import new_code, new_token, token_hash
@@ -131,9 +132,12 @@ class GameHub:
         store = self.arena.store
         online = self.online()
         players = [{"id": p["id"], "name": p["name"], "kind": p["kind"], "is_host": p["is_host"],
-                    "online": p["id"] in online} for p in store.players(self.game["id"])]
+                    "online": p["id"] in online, "balance": p["balance"],
+                    "bust": money.max_lots(p["balance"], money.LOT_PRICE) == 0}
+                   for p in store.players(self.game["id"])]
         return {
             "code": self.game["code"], "name": self.game["name"], "players": players,
+            "bankroll": store.game(self.game["id"])["bankroll"],
             "rounds": [round_info(r) for r in store.rounds(self.game["id"])],
             "current": round_info(self.round) if self.round else None,
             "markets": [{"name": k.name, "title": k.title, "description": k.description,
@@ -190,7 +194,9 @@ class GameHub:
             scenario = kind_obj.scenario(seed, duration)
             if "news" in config:
                 news = headlines(kind_obj, seed, duration, config["news"])
-            on_end = lambda scores: self._round_ended(rnd, scores)  # noqa: E731
+            balances = {p["id"]: p["balance"] for p in players}
+            on_end = lambda scores: self._round_ended(rnd, scores, money=True,  # noqa: E731
+                                                      balances=balances)
             try:
                 if kind == "live":
                     runner: LiveRound | LockstepRound = LiveRound(
@@ -199,13 +205,14 @@ class GameHub:
                         crowdbook=settings.crowdbook, work_dir=settings.work_dir, send=self.send,
                         on_end=on_end, rate_limit=settings.rate_limit,
                         feed_interval_ms=settings.feed_interval_ms, watch=self._watchers,
-                        news=news, announce=self.broadcast)
+                        news=news, balances=balances, announce=self.broadcast)
                 else:
                     runner = LockstepRound(
                         round_id=rnd["id"], scenario=scenario, seed=seed,
                         player_ids=[p["id"] for p in players],
                         timeout_ms=config["turn_timeout_ms"], send=self.send,
                         connected=lambda pid: bool(self.conns.get(pid)), news=news,
+                        balances=balances,
                         on_progress=self._lockstep_progress, on_end=on_end)
                 self.round, self.runner = rnd, runner
                 await runner.start()
@@ -282,8 +289,16 @@ class GameHub:
 
     async def _round_ended(self, rnd: dict[str, Any],
                            scores: dict[int, tuple[float, dict[str, Any]]],
-                           reveal: dict[str, Any] | None = None) -> None:
-        self.arena.store.finish_round(rnd["id"], "finished", scores, reveal)
+                           reveal: dict[str, Any] | None = None, money: bool = False,
+                           balances: dict[int, float] | None = None) -> None:
+        if money:
+            # Each result says what its seat started with and the return on it.
+            for pid, (score, details) in scores.items():
+                start = (balances or {}).get(pid)
+                if start:
+                    details["start_balance"] = start
+                    details["return_pct"] = round(100 * score / start, 4)
+        self.arena.store.finish_round(rnd["id"], "finished", scores, reveal, money=money)
         self.round = self.runner = None
         await self.broadcast({"type": "round_ended", "round": round_info(
             self.arena.store.round(rnd["id"])), "results": self.results(rnd["id"])})
@@ -349,8 +364,13 @@ class Arena:
             self.hubs[game["id"]] = GameHub(self, game)
         return self.hubs[game["id"]]
 
-    def create_game(self, name: Any, host_name: Any) -> tuple[dict[str, Any], dict[str, Any], str]:
+    def create_game(self, name: Any, host_name: Any,
+                    bankroll: Any = None) -> tuple[dict[str, Any], dict[str, Any], str]:
         host_name = check_name(host_name, "your name")
+        dollars = 10_000 if bankroll is None else bankroll
+        if (isinstance(dollars, bool) or not isinstance(dollars, (int, float))
+                or not 100 <= dollars <= 10_000_000):
+            raise GameError("bankroll: dollars each player starts with, from 100 to 10,000,000")
         name = check_name(name or f"{host_name[:17]}'s game", "game name")
         for _ in range(20):
             code = new_code()
@@ -358,7 +378,7 @@ class Arena:
                 break
         else:
             raise GameError("could not find a free code", 500)
-        game = self.store.create_game(code, name)
+        game = self.store.create_game(code, name, round(dollars * money.DOLLAR))
         token = new_token()
         host = self.store.add_player(game["id"], host_name, "human", token_hash(token), True)
         return game, host, token

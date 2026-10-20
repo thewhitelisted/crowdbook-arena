@@ -77,7 +77,7 @@
           <div class="stats" style="margin-top:10px">
             <div class="stat"><div class="k">Position</div><div class="v" id="position">0</div></div>
             <div class="stat"><div class="k">P&amp;L</div><div class="v" id="pnl">0</div></div>
-            <div class="stat"><div class="k">Cash</div><div class="v" id="cash">0</div></div>
+            <div class="stat"><div class="k">Equity</div><div class="v" id="cash">0</div></div>
             <div class="stat"><div class="k">Fees</div><div class="v" id="fees">0</div></div>
           </div>
           <p class="dim" style="font-size:12px;margin:6px 0 0" id="limits"></p>
@@ -101,7 +101,7 @@
           <h2>Order</h2>
           <div class="row">
             <label>Qty <input type="number" id="qty" value="5" min="1"></label>
-            <label>Price <input type="number" id="price"></label>
+            <label>Price $ <input type="number" id="price" step="0.01"></label>
           </div>
           <div class="row">
             <button class="buy" id="buy-limit">Bid</button>
@@ -137,7 +137,7 @@
   <section class="panel hidden" id="lockstep">
     <h2>Lockstep round <span class="dim" id="lockstep-title"></span></h2>
     <p class="dim">Each bot trades its own copy of the same market, and the market waits for it at
-      every turn. All the copies move through the market together, a simulated second at a
+      every turn, with the bot's balance as its buying power. All the copies move through the market together, a simulated second at a
       time. Results come when every bot has finished.</p>
     <div class="row"><span id="lockstep-clock" class="num"></span></div>
     <div class="clock"><div id="lockstep-bar"></div></div>
@@ -148,19 +148,21 @@
   <section class="panel hidden" id="results">
     <h2>Results <span class="dim" id="results-title"></span></h2>
     <p id="solution" class="hidden"></p>
-    <table><thead><tr><th>#</th><th>Player</th><th class="num">Score</th><th class="num">Position or answer</th><th class="num">Fees</th><th class="num">Traded</th></tr></thead>
+    <table><thead><tr><th>#</th><th>Player</th><th class="num" id="results-score">Score</th><th class="num" id="results-return"></th><th class="num">Position or answer</th><th class="num">Fees</th><th class="num">Traded</th></tr></thead>
       <tbody id="results-body"></tbody></table>
-    <p class="dim" style="font-size:12px">Score: profit after fees in tick-lots, with any
-      position left valued at what closing it through the book would bring.</p>
+    <p class="dim" style="font-size:12px">A market round's P&amp;L is after fees, with any position
+      left valued at what closing it through the book would bring, and goes into your balance.
+      A challenge scores out of 100 and leaves money alone.</p>
   </section>
 
   <section class="panel hidden" id="leaderboard">
     <h2>Leaderboard</h2>
     <div class="row" id="board-tabs"></div>
-    <table><thead><tr><th>#</th><th>Player</th><th class="num">Points</th><th class="num">Rounds</th></tr></thead>
+    <table><thead><tr><th>#</th><th>Player</th><th class="num" id="board-value">Points</th><th class="num">Rounds</th></tr></thead>
       <tbody id="board-body"></tbody></table>
-    <p class="dim" style="font-size:12px">Market rounds count by rank: 100 points for first, 0 for
-      last. A challenge counts its score, out of 100.</p>
+    <p class="dim" style="font-size:12px">Overall ranks by balance: the bankroll everyone started
+      with plus every market round's P&amp;L. The other boards rank by points: market rounds by
+      rank, 100 for first and 0 for last; a challenge its score, out of 100.</p>
   </section>
 
   <section class="panel hidden" id="history">

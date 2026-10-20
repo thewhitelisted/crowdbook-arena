@@ -15,7 +15,9 @@ import numpy as np
 import crowdbook_learn
 
 from .bot import Bot, Fill, News, Quote, State, Trade
+from . import money
 from .markets import MarketKind, headlines, public_kind
+from .money import DEFAULT_BANKROLL
 
 _S = {name: i for i, name in enumerate(crowdbook_learn.STATE_NAMES)}
 _TRADE, _FILL = 1, 4
@@ -24,12 +26,14 @@ _TRADE, _FILL = 1, 4
 class SteppedMarket:
     """One market from a scenario's text, stepped by `step` until `done`."""
 
-    def __init__(self, scenario: str, seed: int, news: list[News] | tuple = ()):
+    def __init__(self, scenario: str, seed: int, news: list[News] | tuple = (),
+                 bankroll: float = DEFAULT_BANKROLL):
         self.seed = int(seed)
         self._pool = crowdbook_learn.Pool.from_text(scenario, markets=1, threads=1)
         self._obs, self._info = self._pool.reset(seeds=[self.seed])
         self.done = False
         self.turns = 0
+        self.bankroll = float(bankroll)  # tick-lots the seat starts with
         self._news = sorted(news, key=lambda n: n.time)  # headlines, by when they come out
         self._news_given = 0
 
@@ -73,19 +77,49 @@ class SteppedMarket:
             max_position=int(s[_S["max_position"]]),
             max_order_quantity=int(s[_S["max_order_quantity"]]),
             reference_price=int(s[_S["reference_price"]]), trades=trades, fills=fills,
-            news=news)
+            news=news, balance=self.bankroll)
 
     def step(self, quote: Quote | None) -> None:
         """Places the quote, or leaves the seat's orders as they are for None, and runs on to
         the next decision."""
         if self.done:
             raise RuntimeError("the market has ended")
-        quote = self._resting() if quote is None else quote.checked()
+        quote = self._resting() if quote is None else self._afford(quote.checked())
         row = [*(quote.bid or (0, 0)), *(quote.ask or (0, 0)), quote.take, quote.take_price or 0]
         self._obs, _rewards, terminated, truncated, self._info = self._pool.step_orders(
             np.array([row], dtype=np.int64))
         self.turns += 1
         self.done = bool(terminated[0] or truncated[0])
+
+    def _afford(self, q: Quote) -> Quote:
+        """The quote cut to the seat's buying power (arena_kit.money), as a live seat's is."""
+        s = self._obs["state"][0]
+        position = int(s[_S["position"]])
+        bid, ask = int(s[_S["bid_price"]]), int(s[_S["ask_price"]])
+        at = money.mark(bid, ask, int(s[_S["last_trade"]]), int(s[_S["reference_price"]]))
+        eq = money.equity(self.bankroll, float(s[_S["cash"]]), float(s[_S["fees"]]) / 1000,
+                          position, at)
+
+        resting = self._resting()
+        taken = "buy" if q.take > 0 else "sell" if q.take < 0 else None
+
+        def cut(side: str, level, rests):
+            if level is None or side == taken:
+                return None  # a take on a side leaves no quote there this turn
+            size = min(level[1], money.room(side, position, 0, eq, level[0]))
+            if rests is not None and rests[0] == level[0]:
+                # The engine leaves an order at the same price as it is, size and all: keep it
+                # only if the bankroll still carries it.
+                return rests if rests[1] <= money.room(side, position, 0, eq, level[0]) else None
+            return (level[0], size) if size > 0 else None
+
+        take = q.take
+        if take:
+            price = q.take_price or (ask if take > 0 else bid)
+            take = min(abs(take), money.room(taken, position, 0, eq, price)) if price else 0
+            take = take if q.take > 0 else -take
+        return Quote(bid=cut("buy", q.bid, resting.bid), ask=cut("sell", q.ask, resting.ask),
+                     take=take, take_price=q.take_price)
 
     def _resting(self) -> Quote:
         bid = ask = None
@@ -123,13 +157,15 @@ class LocalResult:
 
 
 def run_local(bot: Bot, market: str | MarketKind = "calm", seed: int = 1,
-              duration_s: int = 300, news: str = "experts") -> LocalResult:
+              duration_s: int = 300, news: str = "experts",
+              bankroll: float = DEFAULT_BANKROLL / money.DOLLAR) -> LocalResult:
     """Runs `bot` in a public market kind (or any `MarketKind`) on this machine, as a lockstep
     round would run it on the server. `news` is when headlines come, in markets with news:
-    instant, experts, crowd or off, as the host of a round chooses."""
+    instant, experts, crowd or off, as the host of a round chooses. `bankroll` is the dollars
+    the bot starts with, which sets its buying power as in a game."""
     kind = public_kind(market) if isinstance(market, str) else market
     m = SteppedMarket(kind.scenario(seed, duration_s), seed,
-                      headlines(kind, seed, duration_s, news))
+                      headlines(kind, seed, duration_s, news), bankroll * money.DOLLAR)
     first = m.state()
     bot.on_start({"market": kind.name, "seed": seed, "duration_s": duration_s, "mode": "local",
                   "max_position": first.max_position,

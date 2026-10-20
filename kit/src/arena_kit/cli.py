@@ -95,6 +95,7 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("--market", default="calm", choices=sorted(PUBLIC_KINDS))
     t.add_argument("--seeds", default="1-5", help="e.g. 7, 1,2,3 or 1-10")
     t.add_argument("--duration", type=int, default=300, help="simulated seconds")
+    t.add_argument("--bankroll", type=float, default=10_000, help="dollars to start with")
     t.add_argument("--news", default="experts", choices=["instant", "experts", "crowd", "off"],
                    help="when headlines come, in markets with news")
     j = sub.add_parser("join", help="play a bot in a game")
@@ -113,7 +114,8 @@ def main(argv: list[str] | None = None) -> None:
         bot = load_bot(args.bot)
         scores = []
         for seed in seeds(args.seeds):
-            r = run_local(bot, args.market, seed=seed, duration_s=args.duration, news=args.news)
+            r = run_local(bot, args.market, seed=seed, duration_s=args.duration, news=args.news,
+                          bankroll=args.bankroll)
             scores.append(r.score)
             print(f"seed {seed:5}: score {r.score:+10.1f}  turns {r.turns:5}  "
                   f"position {r.position:+4}  fees {r.fees:+8.1f}")

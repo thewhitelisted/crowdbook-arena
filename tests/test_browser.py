@@ -53,7 +53,7 @@ def test_two_tabs_play_a_live_round(server):
         b.wait_for_function(
             "document.querySelectorAll('#ladder td.bidq:not(:empty)').length > 3")
         assert "/ 0:40" in b.text_content("#clock-text")
-        assert "100 lots" in b.text_content("#limits")
+        assert "most 100" in b.text_content("#limits") and "$10,000.00" in b.text_content("#limits")
 
         # A bid from the ladder, clicked as a person clicks: the button held down for a fifth of
         # a second, across several updates of the book.
@@ -105,7 +105,9 @@ def test_two_tabs_play_a_live_round(server):
             "document.querySelectorAll('#ladder td.bidq:not(:empty)').length > 3")
         assert "watching" in c.text_content("#spectating")
         assert c.locator("#tape tr").count() > 0
-        # The Cancel button in the order list, held the same way.
+        # The Cancel button in the order list, held the same way. The list itself is not redrawn,
+        # so it can be scrolled to.
+        b.evaluate("document.getElementById('orders').scrollIntoView({block: 'center'})")
         human_click(b, b.locator("#orders button").first)
         b.wait_for_function("document.querySelectorAll('#orders tr').length === 0",
                             timeout=3000)

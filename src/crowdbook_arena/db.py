@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import (JSON, Column, Float, ForeignKey, Integer, MetaData, String, Table,
-                        UniqueConstraint, create_engine, select, update)
+                        UniqueConstraint, create_engine, inspect, select, text, update)
+
+from arena_kit.money import DEFAULT_BANKROLL
 from sqlalchemy.engine import Engine
 
 metadata = MetaData()
@@ -21,6 +23,7 @@ games = Table(
     Column("name", String(64), nullable=False),
     Column("created_at", Float, nullable=False),
     Column("status", String(16), nullable=False, default="open"),  # open, closed
+    Column("bankroll", Float, nullable=False, default=DEFAULT_BANKROLL),  # tick-lots (cents)
 )
 
 players = Table(
@@ -32,6 +35,7 @@ players = Table(
     Column("token_hash", String(64), nullable=False, unique=True),
     Column("is_host", Integer, nullable=False, default=0),
     Column("joined_at", Float, nullable=False),
+    Column("balance", Float, nullable=True),   # tick-lots (cents); the game's bankroll if null
     UniqueConstraint("game_id", "name"),
 )
 
@@ -67,13 +71,29 @@ class Store:
             Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
         self.engine: Engine = create_engine(url, json_serializer=json.dumps)
         metadata.create_all(self.engine)
+        self._add_missing_columns()
+
+    def _add_missing_columns(self) -> None:
+        """Columns added since a database was made: bankrolls and balances."""
+        have = {t: {c["name"] for c in inspect(self.engine).get_columns(t)}
+                for t in ("games", "players")}
+        with self.engine.begin() as c:
+            if "bankroll" not in have["games"]:
+                c.execute(text(f"ALTER TABLE games ADD COLUMN bankroll FLOAT NOT NULL "
+                               f"DEFAULT {DEFAULT_BANKROLL}"))
+            if "balance" not in have["players"]:
+                c.execute(text("ALTER TABLE players ADD COLUMN balance FLOAT"))
+            c.execute(text("UPDATE players SET balance = (SELECT bankroll FROM games WHERE "
+                           "games.id = players.game_id) WHERE balance IS NULL"))
 
     # Games and players
 
-    def create_game(self, code: str, name: str) -> dict[str, Any]:
+    def create_game(self, code: str, name: str,
+                    bankroll: float = DEFAULT_BANKROLL) -> dict[str, Any]:
         with self.engine.begin() as c:
             gid = c.execute(games.insert().values(
-                code=code, name=name, created_at=time.time(), status="open")).inserted_primary_key[0]
+                code=code, name=name, created_at=time.time(), status="open",
+                bankroll=bankroll)).inserted_primary_key[0]
         return self.game(gid)
 
     def game(self, game_id: int) -> dict[str, Any] | None:
@@ -89,9 +109,11 @@ class Store:
     def add_player(self, game_id: int, name: str, kind: str, token_hash: str,
                    is_host: bool = False) -> dict[str, Any]:
         with self.engine.begin() as c:
+            bankroll = c.execute(select(games.c.bankroll).where(games.c.id == game_id)).scalar_one()
             pid = c.execute(players.insert().values(
                 game_id=game_id, name=name, kind=kind, token_hash=token_hash,
-                is_host=int(is_host), joined_at=time.time())).inserted_primary_key[0]
+                is_host=int(is_host), joined_at=time.time(),
+                balance=bankroll)).inserted_primary_key[0]
         return self.player(pid)
 
     def player(self, player_id: int) -> dict[str, Any] | None:
@@ -136,7 +158,7 @@ class Store:
 
     def finish_round(self, round_id: int, status: str,
                      scores: dict[int, tuple[float, dict[str, Any]]],
-                     reveal: dict[str, Any] | None = None) -> None:
+                     reveal: dict[str, Any] | None = None, money: bool = False) -> None:
         """Stores a round's results; `reveal` is added to its config, such as a challenge's
         solution, which is kept out of sight until the round ends."""
         with self.engine.begin() as c:
@@ -148,6 +170,10 @@ class Store:
             for pid, (score, details) in scores.items():
                 c.execute(results.insert().values(round_id=round_id, player_id=pid,
                                                   score=float(score), details=details))
+                if money:
+                    # A market round's score is its P&L after fees, in tick-lots: into the bank.
+                    c.execute(update(players).where(players.c.id == pid).values(
+                        balance=players.c.balance + float(score)))
             c.execute(update(rounds).where(rounds.c.id == round_id).values(
                 status=status, ended_at=time.time()))
 

@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from arena_kit.bot import News, Quote
+from arena_kit.money import DEFAULT_BANKROLL
 from arena_kit.stepped import SteppedMarket
 
 log = logging.getLogger(__name__)
@@ -58,12 +59,14 @@ class LockstepRound:
     def __init__(self, *, round_id: int, scenario: str, seed: int, player_ids: list[int],
                  timeout_ms: int, send: Send, connected: Callable[[int], bool],
                  news: list[News] | tuple = (),
+                 balances: dict[int, float] | None = None,
                  on_progress: Callable[[dict[str, Any]], Awaitable[None]],
                  on_end: Callable[[dict[int, tuple[float, dict[str, Any]]]], Awaitable[None]]):
         self.round_id = round_id
         self.seed = seed
         self.timeout = timeout_ms / 1000
-        self.seats = {pid: LockstepSeat(pid, SteppedMarket(scenario, seed, news))
+        self.seats = {pid: LockstepSeat(pid, SteppedMarket(
+                          scenario, seed, news, (balances or {}).get(pid, DEFAULT_BANKROLL)))
                       for pid in player_ids}
         self.duration = max(s.market.state().time_left + s.market.state().time
                             for s in self.seats.values())

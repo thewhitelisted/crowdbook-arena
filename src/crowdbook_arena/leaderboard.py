@@ -14,6 +14,8 @@ from typing import Any
 
 BOARDS = {"live": "Live trading", "lockstep": "Algorithmic", "challenge": "Challenges",
           "overall": "Overall"}
+# The overall board ranks by money: each player's balance now, the bankroll they started with plus
+# every market round's P&L. The others rank by points.
 
 
 def rank_points(scores: dict[int, float]) -> dict[int, float]:
@@ -57,12 +59,21 @@ def leaderboards(rounds: list[dict[str, Any]], results: list[dict[str, Any]],
     names = {p["id"]: p for p in players}
     out = {}
     for board, title in BOARDS.items():
-        rows = [{"player_id": pid, "name": names[pid]["name"], "kind": names[pid]["kind"],
-                 "points": round(pts, 2), "rounds": counts[board][pid]}
-                for pid, pts in totals[board].items() if pid in names]
-        rows.sort(key=lambda r: (-r["points"], r["name"].lower()))
+        if board == "overall":
+            # Everyone, by money; a player who has played nothing still has their bankroll.
+            rows = [{"player_id": p["id"], "name": p["name"], "kind": p["kind"],
+                     "points": round(totals[board].get(p["id"], 0.0), 2),
+                     "rounds": counts[board].get(p["id"], 0),
+                     "balance": p.get("balance")} for p in players]
+            key = "balance"
+            rows.sort(key=lambda r: (-(r["balance"] or 0), r["name"].lower()))
+        else:
+            rows = [{"player_id": pid, "name": names[pid]["name"], "kind": names[pid]["kind"],
+                     "points": round(pts, 2), "rounds": counts[board][pid]}
+                    for pid, pts in totals[board].items() if pid in names]
+            key = "points"
+            rows.sort(key=lambda r: (-r["points"], r["name"].lower()))
         for i, row in enumerate(rows):
-            row["rank"] = i + 1 if i == 0 or row["points"] != rows[i - 1]["points"] \
-                else rows[i - 1]["rank"]
-        out[board] = {"title": title, "rows": rows}
+            row["rank"] = i + 1 if i == 0 or row[key] != rows[i - 1][key] else rows[i - 1]["rank"]
+        out[board] = {"title": title, "by": key, "rows": rows}
     return out
