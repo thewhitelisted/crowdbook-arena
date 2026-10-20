@@ -166,6 +166,12 @@ the same moments live, in lockstep and offline (`arena-kit test --news`). The ar
 market's value path itself, so that it knows each jump, and gives it to crowdbook (0.14 or later)
 as a recorded path.
 
+Each round comes with a briefing: who trades, the fees, the limits, when headlines come, and how
+the score is counted, without anything of the round's own path. Screens show it in a panel while
+the round runs, and the host sees it in the lobby when choosing the market. Bots get it in
+`on_start(info)["briefing"]`, live, in lockstep and offline. `arena-kit practice` records the public
+kinds as CSV files to study, true value included (see the [kit's README](kit/README.md)).
+
 A Python package installed on the server can add kinds of its own through the
 `crowdbook_arena.market_kinds` entry point group (see `src/crowdbook_arena/kinds.py`). Those kinds
 stay on the server: players cannot read them or test against them offline.

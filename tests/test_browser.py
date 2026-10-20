@@ -188,9 +188,14 @@ def test_news_in_the_browser(server):
         assert a.is_visible("#news-delay")
         a.select_option("#news-delay", "instant")
         a.fill("#duration", "20")
+        a.dispatch_event("#duration", "change")
+        a.wait_for_function("document.getElementById('market-briefing').textContent"
+                            ".includes('the moment it happens')")
         a.fill("#speed", "4")
         a.click("#start-round")
         a.wait_for_selector("#news-panel:not(.hidden)")
+        a.wait_for_selector("#briefing-panel:not(.hidden)")
+        assert a.inner_text("#briefing").startswith("calm, with headlines")
         a.wait_for_function("document.getElementById('news').textContent.includes('Good news')",
                             timeout=10000)
         a.screenshot(path=str(SHOTS / "news.png"))

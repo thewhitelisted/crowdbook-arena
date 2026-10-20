@@ -2,6 +2,7 @@
 
     arena-kit markets
     arena-kit test my_bot.py --market news --seeds 1-5
+    arena-kit practice --market news --seeds 1-5 --out data/
     arena-kit join my_bot.py --server http://localhost:8000 --code ABCDEF --name my-bot
 
 A bot file defines `bot`, an instance of arena_kit.Bot, or a single Bot subclass to make one of.
@@ -25,6 +26,7 @@ from pathlib import Path
 from .bot import Bot
 from .client import run
 from .markets import PUBLIC_KINDS
+from .practice import record
 from .stepped import run_local
 
 
@@ -98,6 +100,13 @@ def main(argv: list[str] | None = None) -> None:
     t.add_argument("--bankroll", type=float, default=10_000, help="dollars to start with")
     t.add_argument("--news", default="experts", choices=["instant", "experts", "crowd", "off"],
                    help="when headlines come, in markets with news")
+    p = sub.add_parser("practice", help="record public markets as CSV files to study")
+    p.add_argument("--market", default="calm", choices=sorted(PUBLIC_KINDS))
+    p.add_argument("--seeds", default="1-5", help="e.g. 7, 1,2,3 or 1-10")
+    p.add_argument("--duration", type=int, default=300, help="simulated seconds")
+    p.add_argument("--news", default="experts", choices=["instant", "experts", "crowd", "off"],
+                   help="when headlines come, in markets with news")
+    p.add_argument("--out", default="practice", help="the folder to write to")
     j = sub.add_parser("join", help="play a bot in a game")
     j.add_argument("bot")
     j.add_argument("--server", required=True, help="e.g. http://localhost:8000")
@@ -122,6 +131,14 @@ def main(argv: list[str] | None = None) -> None:
         if len(scores) > 1:
             print(f"mean {statistics.mean(scores):+.1f}, sd {statistics.stdev(scores):.1f} "
                   f"over {len(scores)} markets")
+    elif args.command == "practice":
+        if not 5 <= args.duration <= 7200:
+            raise SystemExit("--duration: from 5 to 7200 simulated seconds")
+        for seed in seeds(args.seeds):
+            rec = record(args.market, seed, args.duration, args.news)
+            paths = rec.write(args.out)
+            print(f"seed {seed:5}: {len(rec.ticks)} ticks, {len(rec.trades)} trades, "
+                  f"{len(rec.headlines)} headlines -> {', '.join(p.name for p in paths)}")
     elif args.command == "join":
         bot = load_bot(args.bot)
         token = args.token or join_token(args.server, args.code, args.name)

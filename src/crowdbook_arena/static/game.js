@@ -87,6 +87,7 @@ function handle(msg) {
       break;
     case "round_started":
       $("results").classList.add("hidden");
+      showBriefing(msg.round);
       break;
     case "news":
       if (msg.round === roundId && seat) {
@@ -127,6 +128,7 @@ function handle(msg) {
       $("trading").classList.add("hidden");
       $("lockstep").classList.add("hidden");
       $("challenge").classList.add("hidden");
+      $("briefing-panel").classList.add("hidden");
       clearInterval(challengeTimer);
       break;
   }
@@ -154,6 +156,7 @@ function setGame(g) {
   }
   $("start-round").classList.toggle("hidden", !!g.current);
   $("stop-round").classList.toggle("hidden", !g.current);
+  showBriefing(g.current);
   if (g.current) {
     $("round-title").textContent =
       `round ${g.current.number}: ${g.current.config.market_title || g.current.market}`;
@@ -169,6 +172,15 @@ function setGame(g) {
       showResults(r.round, r.results);
     };
   }
+}
+
+// The briefing of the market round under way, while it lasts.
+function showBriefing(r) {
+  const text = r && r.config && r.config.briefing;
+  $("briefing-panel").classList.toggle("hidden", !text);
+  if (!text) return;
+  $("briefing-title").textContent = `round ${r.number}: ${r.config.market_title || r.market}`;
+  if ($("briefing").textContent !== text) $("briefing").textContent = text;
 }
 
 function showLockstep(p) {
@@ -282,8 +294,26 @@ $("round-kind").onchange = showKindFields;
 function describeMarket() {
   const m = game.markets.find((x) => x.name === $("market").value);
   $("market-description").textContent = m ? m.description : "";
+  previewBriefing();
 }
 $("market").onchange = () => { describeMarket(); showKindFields(); };
+
+// The briefing players will get, for the market, length and news the host has chosen.
+let briefingAsked = 0;
+async function previewBriefing() {
+  const name = $("market").value;
+  if (!name) return;
+  const ask = ++briefingAsked;
+  const q = new URLSearchParams({ duration_s: $("duration").value, news: $("news-delay").value });
+  try {
+    const r = await get(`/api/kinds/${encodeURIComponent(name)}/briefing?${q}`);
+    if (ask === briefingAsked) $("market-briefing").textContent = r.briefing;
+  } catch {
+    if (ask === briefingAsked) $("market-briefing").textContent = "";
+  }
+}
+$("duration").onchange = previewBriefing;
+$("news-delay").onchange = previewBriefing;
 
 $("start-round").onclick = async () => {
   $("host-error").textContent = "";

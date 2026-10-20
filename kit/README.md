@@ -53,7 +53,9 @@ it can still afford to bid at a price. Quotes beyond buying power are cut to wha
 afford, offline and in a game alike; the arena's README explains the rule.
 
 Prices are in ticks, quantities in lots, and cash and P&L in tick-lots. `on_start(info)` and
-`on_end(result)` are optional.
+`on_end(result)` are optional. `info["briefing"]` is the round's briefing, the text players see
+before it starts: who trades, the fees, the limits, when headlines come and how the score is
+counted. It is the same offline, in lockstep rounds and in live ones.
 
 ## Test it offline
 
@@ -69,6 +71,24 @@ gives the same market and the same score. From Python:
 from arena_kit import run_local
 print(run_local(MyBot(), "calm", seed=7))
 ```
+
+## Practice data
+
+```bash
+arena-kit practice --market news --seeds 1-5 --out data/
+```
+
+records each public market as it runs for a seed with nobody else in it, every quarter second of
+simulated time, into `data/`:
+- `news-1-book.csv`: the best bid and offer, the mid, the last trade, the lots traded since the
+  last row, and the true value, which no player sees during a round;
+- `news-1-trades.csv`: every trade, with the side that crossed the spread;
+- `news-1-headlines.csv`, in markets with news: each headline and when it came out (`--news` sets
+  how late, as the host does);
+- `news-1-briefing.txt`: the briefing.
+
+The same seed always gives the same files. From Python, `arena_kit.practice.record("news",
+seed=1)`. Only the public kinds can be recorded.
 
 ## Play it in a game
 
