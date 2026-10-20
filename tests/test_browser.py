@@ -114,8 +114,17 @@ def test_two_tabs_play_a_live_round(server):
             "document.querySelectorAll('#ladder td.bidq:not(:empty)').length > 3")
         assert "watching" in c.text_content("#spectating")
         assert c.locator("#tape tr").count() > 0
-        # The Cancel button in the order list, held the same way. The list itself is not redrawn,
-        # so it can be scrolled to.
+        # The Cancel button in the order list, held the same way. The bid placed earlier may have
+        # filled by now, so start again from one fresh bid at the deepest level shown, which
+        # will not fill in the second this takes. The list itself is not redrawn, so it can be
+        # scrolled to.
+        b.click("#cancel-all")
+        b.wait_for_function("document.querySelectorAll('#orders tr').length === 0",
+                            timeout=3000)
+        b.evaluate("window.scrollTo(0, 0)")
+        human_click(b, b.locator("#ladder td.bidq:not(:empty)").last)
+        b.wait_for_function("document.querySelectorAll('#orders tr').length === 1",
+                            timeout=3000)
         b.evaluate("document.getElementById('orders').scrollIntoView({block: 'center'})")
         human_click(b, b.locator("#orders button").first)
         b.wait_for_function("document.querySelectorAll('#orders tr').length === 0",
