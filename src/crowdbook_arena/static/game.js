@@ -142,7 +142,8 @@ function setGame(g) {
     `<li><span class="dot ${p.online ? "on" : ""}"></span>${esc(p.name)}` +
     `${p.is_host ? '<span class="badge">host</span>' : ""}` +
     `${p.kind === "bot" ? '<span class="badge">bot</span>' : ""}` +
-    `${me && p.id === me.id ? '<span class="badge">you</span>' : ""}</li>`).join("");
+    `${me && p.id === me.id ? '<span class="badge">you</span>' : ""}` +
+    ` <span class="dim">${usd(p.balance)}</span>${p.bust ? '<span class="badge neg">bust</span>' : ""}</li>`).join("");
   const isHost = me && me.is_host;
   $("host-controls").classList.toggle("hidden", !isHost);
   if (isHost && $("market").options.length !== g.markets.length) {
@@ -209,11 +210,12 @@ function showBoards() {
   for (const btn of $("board-tabs").querySelectorAll("button")) {
     btn.onclick = () => { board = btn.dataset.board; showBoards(); };
   }
-  const rows = boards[board].rows;
-  $("board-body").innerHTML = rows.length ? rows.map((r) =>
+  const b = boards[board], byMoney = b.by === "balance";
+  $("board-value").textContent = byMoney ? "Balance" : "Points";
+  $("board-body").innerHTML = b.rows.length ? b.rows.map((r) =>
     `<tr class="${me && r.player_id === me.id ? "pos" : ""}"><td>${r.rank}</td><td>${esc(r.name)}` +
     `${r.kind === "bot" ? '<span class="badge">bot</span>' : ""}</td>` +
-    `<td class="num">${r.points.toFixed(1)}</td><td class="num">${r.rounds}</td></tr>`).join("")
+    `<td class="num">${byMoney ? usd(r.balance) : r.points.toFixed(1)}</td><td class="num">${r.rounds}</td></tr>`).join("")
     : '<tr><td colspan="4" class="dim">No rounds of this kind yet.</td></tr>';
 }
 
@@ -315,6 +317,7 @@ function fromSnapshot(s) {
     orders: new Map((s.orders || []).map((o) => [o.id, o])), bids: s.bids || [], asks: s.asks || [],
     last: s.last_trade, trades: (s.trades || []).slice(-60).reverse(), ended: s.ended,
     reference: s.reference_price || 0, initialCash: s.initial_cash || 0,
+    balance: s.balance ?? 1000000,
     mids: new Map((s.mids || []).map(([q, p]) => [q, p])), myFills: (s.my_fills || []).slice(),
     news: (s.news || []).slice(),
   };
@@ -391,6 +394,14 @@ function mark(s) {
   return s.last || s.reference;
 }
 
+// Money and prices: a tick is a cent, so amounts in tick-lots are cents.
+function usd(cents, signed = false) {
+  const v = Number(cents) / 100;
+  const s = `$${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return v < 0 ? `-${s}` : signed && v > 0 ? `+${s}` : s;
+}
+function px(ticks) { return (Number(ticks) / 100).toFixed(2); }
+
 function fmt(x, digits = 1) {
   const v = Number(x);
   return (v > 0 ? "+" : "") + v.toFixed(digits);
@@ -400,13 +411,16 @@ function render() {
   const s = seat;
   if (!s) return;
   const pnl = s.cash + (s.position - s.initialPosition) * mark(s) - s.fees;
+  const equity = s.balance + pnl;
+  const power = mark(s) > 0 ? Math.max(0, Math.floor(equity / mark(s) + 1e-9)) : 0;
   $("position").textContent = s.position;
-  $("pnl").textContent = fmt(pnl);
+  $("pnl").textContent = usd(pnl, true);
   $("pnl").className = `v ${pnl > 0 ? "pos" : pnl < 0 ? "neg" : ""}`;
-  $("cash").textContent = Math.round(s.cash);
-  $("fees").textContent = s.fees.toFixed(1);
+  $("cash").textContent = usd(equity);
+  $("fees").textContent = usd(s.fees);
   $("limits").textContent = seated
-    ? `Limits: ${s.maxPosition} lots either way, ${s.maxOrder} an order. P&L values your position at the middle of the market.`
+    ? `Started the round with ${usd(s.balance)}. Buying power: ${Math.min(power, s.maxPosition)} lots either way ` +
+      `(most ${s.maxPosition}), ${s.maxOrder} an order. P&L values your position at the middle of the market.`
     : "";
   const t = s.time / SEC, d = s.duration / SEC;
   $("clock-text").textContent = s.ended ? "closed" : s.started
@@ -420,9 +434,9 @@ function render() {
     `<tr><td class="dim">${clock(n.time / SEC)}</td><td class="${n.change > 0 ? "pos" : n.change < 0 ? "neg" : ""}">${esc(n.headline)}</td></tr>`).join("")
     || '<tr><td class="dim">No news yet.</td></tr>';
   $("tape").innerHTML = s.trades.slice(0, 40).map((tr) =>
-    `<tr><td class="dim">${clock(tr.time / SEC)}</td><td class="num ${tr.aggressor === "buy" ? "pos" : "neg"}">${tr.price}</td>` +
+    `<tr><td class="dim">${clock(tr.time / SEC)}</td><td class="num ${tr.aggressor === "buy" ? "pos" : "neg"}">${px(tr.price)}</td>` +
     `<td class="num">${tr.quantity}</td></tr>`).join("");
-  if (!$("price").value && s.bids.length) $("price").value = s.bids[0][0];
+  if (!$("price").value && s.bids.length) $("price").value = px(s.bids[0][0]);
 }
 
 // The price chart: the middle of the market every quarter second of simulated time, drawn as a
@@ -525,7 +539,7 @@ function renderChart(s) {
     ctx.strokeStyle = color("--line");
     ctx.beginPath(); ctx.moveTo(left, Math.round(y(p)) + 0.5); ctx.lineTo(w - right, Math.round(y(p)) + 0.5); ctx.stroke();
     ctx.fillStyle = color("--dim");
-    ctx.fillText(String(p), w - right + 6, y(p) + 4);
+    ctx.fillText(px(p), w - right + 6, y(p) + 4);
   }
   ctx.fillStyle = color("--dim");
   ctx.fillText(clock(t0), left, h - 5);
@@ -571,7 +585,7 @@ function renderChart(s) {
   const lastP = shown[shown.length - 1][1], ex = xs[xs.length - 1], ey = ys[ys.length - 1];
   ctx.fillStyle = accent;
   ctx.beginPath(); ctx.arc(ex, ey, 4, 0, 2 * Math.PI); ctx.fill();
-  const label = Number.isInteger(lastP) ? String(lastP) : lastP.toFixed(1);
+  const label = px(lastP);
   ctx.fillRect(w - right + 2, ey - 9, right - 4, 18);
   ctx.fillStyle = "#fff";
   ctx.fillText(label, w - right + 6, ey + 4);
@@ -587,7 +601,7 @@ function renderChart(s) {
     ctx.fillStyle = accent;
     ctx.beginPath(); ctx.arc(xs[i], ys[i], 4, 0, 2 * Math.PI); ctx.fill();
     const p = shown[i][1];
-    tip.textContent = `${clock(shown[i][0])}  ${Number.isInteger(p) ? p : p.toFixed(1)}`;
+    tip.textContent = `${clock(shown[i][0])}  $${px(p)}`;
     tip.classList.remove("hidden");
     tip.style.left = `${Math.min(Math.max(xs[i] - tip.offsetWidth / 2, 0), w - tip.offsetWidth)}px`;
   } else {
@@ -621,7 +635,7 @@ function renderLadder(s) {
     rows.push(`<tr class="${cls}" data-price="${p}">` +
       `<td class="mine" data-side="buy">${mb || ""}</td>` +
       `<td class="bidq" data-side="buy">${bids.get(p) || ""}</td>` +
-      `<td class="price">${p}</td>` +
+      `<td class="price">${px(p)}</td>` +
       `<td class="askq" data-side="sell">${asks.get(p) || ""}</td>` +
       `<td class="mine" data-side="sell">${ma || ""}</td></tr>`);
   }
@@ -650,7 +664,7 @@ $("ladder").addEventListener("pointerdown", (e) => {
 function renderOrders(s) {
   const list = [...s.orders.values()].sort((a, b) => (b.price || 0) - (a.price || 0));
   $("orders").innerHTML = list.map((o) =>
-    `<tr><td class="${o.side === "buy" ? "pos" : "neg"}">${o.side}</td><td class="num">${o.price ?? "market"}</td>` +
+    `<tr><td class="${o.side === "buy" ? "pos" : "neg"}">${o.side}</td><td class="num">${o.price != null ? px(o.price) : "market"}</td>` +
     `<td class="num">${o.leaves}</td><td><button data-id="${o.id}">Cancel</button></td></tr>`).join("");
 }
 
@@ -674,8 +688,10 @@ function market(side) {
   send({ type: "new", side, order_type: "market", quantity: qty() });
 }
 
-$("buy-limit").onclick = () => limit("buy", parseInt($("price").value, 10));
-$("sell-limit").onclick = () => limit("sell", parseInt($("price").value, 10));
+// The ticket's price is in dollars; orders are in ticks, cents.
+const ticketPrice = () => Math.round(parseFloat($("price").value) * 100);
+$("buy-limit").onclick = () => limit("buy", ticketPrice());
+$("sell-limit").onclick = () => limit("sell", ticketPrice());
 $("buy-market").onclick = () => market("buy");
 $("sell-market").onclick = () => market("sell");
 $("cancel-all").onclick = () => send({ type: "cancel_all" });
@@ -696,10 +712,14 @@ function showResults(round, results) {
         : `The best answer: ${esc(describeAnswer(sol.answer))}, worth ${Number(sol.value).toFixed(2)}.`) +
       ` Scores are out of 100: the best answer scores 100 and doing nothing 0.`;
   }
+  const money = round.kind !== "challenge";
+  $("results-score").textContent = money ? "P&L" : "Score";
+  $("results-return").textContent = money ? "Return" : "";
   $("results-body").innerHTML = results.map((r) =>
     `<tr class="${me && r.player_id === me.id ? "pos" : ""}"><td>${r.rank}</td><td>${esc(r.name)}${r.kind === "bot" ? '<span class="badge">bot</span>' : ""}</td>` +
-    `<td class="num">${fmt(r.score)}</td><td class="num">${r.details.position ?? (r.details.answered === false ? "no answer" : r.details.answer ? esc(describeAnswer(r.details.answer)) : "")}</td>` +
-    `<td class="num">${r.details.fees != null ? Number(r.details.fees).toFixed(1) : ""}</td>` +
+    `<td class="num">${money ? usd(r.score, true) : fmt(r.score)}</td>` +
+    `<td class="num">${money && r.details.return_pct != null ? `${fmt(r.details.return_pct, 2)}%` : ""}</td><td class="num">${r.details.position ?? (r.details.answered === false ? "no answer" : r.details.answer ? esc(describeAnswer(r.details.answer)) : "")}</td>` +
+    `<td class="num">${r.details.fees != null ? usd(r.details.fees) : ""}</td>` +
     `<td class="num">${r.details.traded ?? ""}</td></tr>`).join("");
 }
 

@@ -9,6 +9,7 @@ from collections import deque
 from typing import Any
 
 from .bot import Fill, State, Trade
+from .money import DEFAULT_BANKROLL
 
 FEE_UNITS = 1000  # fees and scores are sent in thousandths of a tick-lot
 SECOND = 1_000_000_000
@@ -31,6 +32,7 @@ class SeatTracker:
         self.position = 0
         self.fees = 0.0       # tick-lots
         self.traded = 0       # lots bought and sold
+        self.balance: float = DEFAULT_BANKROLL  # tick-lots the seat started the round with
         self.mids: dict[int, float] = {}  # quarter second -> the middle of the market then
         self.my_fills: list[list[Any]] = []  # [time, side, price, quantity], for the chart
         self.orders: dict[int, dict[str, Any]] = {}  # live orders the exchange has accepted
@@ -143,7 +145,8 @@ class SeatTracker:
             my_bid=(mb[0]["price"], mb[0]["leaves"]) if mb else None,
             my_ask=(ma[0]["price"], ma[0]["leaves"]) if ma else None,
             max_position=self.max_position, max_order_quantity=self.max_order_quantity,
-            reference_price=self.reference_price, trades=trades or [], fills=fills or [])
+            reference_price=self.reference_price, trades=trades or [], fills=fills or [],
+            balance=self.balance)
 
     def snapshot(self) -> dict[str, Any]:
         """Everything a screen needs to draw the seat from scratch, as JSON."""
@@ -153,6 +156,7 @@ class SeatTracker:
             "max_order_quantity": self.max_order_quantity, "maker_fee": self.maker_fee,
             "taker_fee": self.taker_fee, "cash": self.cash, "position": self.position,
             "fees": self.fees, "traded": self.traded, "orders": list(self.orders.values()),
+            "balance": self.balance,
             "pending": list(self.pending.values()),
             "initial_cash": self._initial_cash, "initial_position": self._initial_position,
             "bids": self.bids, "asks": self.asks, "last_trade": self.last_trade,
@@ -171,6 +175,7 @@ class SeatTracker:
         self.maker_fee, self.taker_fee = snap["maker_fee"], snap["taker_fee"]
         self.cash, self.position, self.fees = snap["cash"], snap["position"], snap["fees"]
         self.traded = snap.get("traded", 0)
+        self.balance = snap.get("balance", DEFAULT_BANKROLL)
         self.orders = {o["id"]: dict(o) for o in snap["orders"]}
         self.pending = {o["id"]: dict(o) for o in snap.get("pending", [])}
         self._initial_cash = snap.get("initial_cash", 0)

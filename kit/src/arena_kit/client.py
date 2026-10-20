@@ -95,10 +95,13 @@ class LiveDriver:
             self.cancelling.add(oid)
             await self._send({"type": "cancel", "id": oid})
 
-    def _room(self, side: str) -> int:
+    def _room(self, side: str, price: float) -> int:
+        """Lots one order on this side may have: within the position limit, the largest order,
+        and the seat's buying power, its other order on the side being replaced."""
         t = self.t
         room = t.max_position - t.position if side == "buy" else t.max_position + t.position
-        return max(0, min(room, t.max_order_quantity))
+        afford = self.t.state().room(side, price)
+        return max(0, min(room, t.max_order_quantity, afford))
 
     def _new_id(self) -> int:
         oid = self.next_id
@@ -111,12 +114,12 @@ class LiveDriver:
             taken = "buy" if q.take > 0 else "sell"
             for o in self.t.my_side(taken):
                 await self._cancel(o["id"])
-            qty = min(abs(q.take), self._room(taken))
             price = q.take_price
             if price is None:
                 other = self.t.asks if taken == "buy" else self.t.bids
                 price = other[0][0] if other else None
-            if qty > 0 and price is not None:
+            qty = min(abs(q.take), self._room(taken, price)) if price is not None else 0
+            if qty > 0:
                 await self._send({"type": "new", "id": self._new_id(), "side": taken,
                                   "order_type": "limit", "time_in_force": "immediate-or-cancel",
                                   "price": price, "quantity": qty})
@@ -126,7 +129,7 @@ class LiveDriver:
             if any(p["side"] == side for p in self.t.pending.values()):
                 continue  # an order on this side is still on its way: wait for its answer
             resting = [o for o in self.t.my_side(side) if o["id"] not in self.cancelling]
-            size = min(want[1], self._room(side)) if want else 0
+            size = min(want[1], self._room(side, want[0])) if want else 0
             if size <= 0:
                 for o in resting:
                     await self._cancel(o["id"])

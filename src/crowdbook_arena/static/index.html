@@ -16,6 +16,7 @@
     <form id="create">
       <input name="host_name" placeholder="Your name" required maxlength="24">
       <input name="name" placeholder="Game name (optional)" maxlength="24">
+      <label class="dim">Bankroll $ <input name="bankroll" type="number" value="10000" min="100" max="10000000" step="100" style="width:110px"></label>
       <button class="primary">Start a game</button>
     </form>
     <div class="error" id="create-error"></div>
@@ -37,7 +38,7 @@ document.getElementById("create").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
   try {
-    const r = await post("/api/games", { host_name: f.get("host_name"), name: f.get("name") || null });
+    const r = await post("/api/games", { host_name: f.get("host_name"), name: f.get("name") || null, bankroll: Number(f.get("bankroll")) });
     saveToken(r.code, r.token, r.player.name);
     location.href = `/g/${r.code}`;
   } catch (err) { document.getElementById("create-error").textContent = err.message; }

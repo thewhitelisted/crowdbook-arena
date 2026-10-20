@@ -42,6 +42,10 @@ def test_boards_by_kind_and_overall():
         ("ann", 80), ("cy", -20)]
     overall = {r["name"]: (r["points"], r["rounds"]) for r in b["overall"]["rows"]}
     assert overall == {"ann": (180, 2), "bot": (150, 2), "cy": (-20, 2)}
+    # Overall ranks by balance, not points.
+    rich = [{**p, "balance": bal} for p, bal in zip(players, [100.0, 300.0, 200.0])]
+    assert [r["name"] for r in leaderboards(rounds, results, rich)["overall"]["rows"]] == [
+        "bot", "cy", "ann"]
 
 
 def test_the_leaderboard_follows_rounds(server):
@@ -53,7 +57,8 @@ def test_the_leaderboard_follows_rounds(server):
         a = await connect(server, game["token"])
         b = await connect(server, bob["token"])
         board = await recv_until(b, lambda m: m["type"] == "leaderboard")
-        assert board["boards"]["overall"]["rows"] == []
+        # Before any round, overall lists everyone by their bankroll.
+        assert [r["balance"] for r in board["boards"]["overall"]["rows"]] == [1_000_000] * 2
         r = await asyncio.to_thread(server.post, f"/api/games/{code}/rounds",
                                     {"kind": "challenge", "challenge": "kelly", "seed": 2,
                                      "duration_s": 600}, game["token"])

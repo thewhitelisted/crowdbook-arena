@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from arena_kit.bot import News
+from arena_kit import money
+from arena_kit.money import DEFAULT_BANKROLL
 from arena_kit.tracker import FEE_UNITS, SeatTracker
 
 from .auth import new_token
@@ -97,6 +99,7 @@ class LiveRound:
                  rate_limit: int = 50, feed_interval_ms: int = 100,
                  watch: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
                  news: list[News] | tuple = (),
+                 balances: dict[int, float] | None = None,
                  announce: Callable[[dict[str, Any]], Awaitable[None]] | None = None):
         self.round_id = round_id
         self.seed = seed
@@ -108,6 +111,7 @@ class LiveRound:
         self.rate_limit = rate_limit
         self.feed_interval_ms = feed_interval_ms
         self.seats = {pid: Seat(pid, f"p{pid}", new_token()) for pid in player_ids}
+        self.balances = {pid: (balances or {}).get(pid, DEFAULT_BANKROLL) for pid in player_ids}
         self._send = send
         self._watch_feed = watch  # the market's public messages, for players without a seat
         self._news = sorted(news, key=lambda n: n.time)  # headlines, by when they come out
@@ -171,6 +175,7 @@ class LiveRound:
             if welcome.get("type") != "welcome":
                 raise RuntimeError(f"crowdbook serve did not welcome a seat: {welcome}")
             seat.tracker.apply(welcome)
+            seat.tracker.balance = self.balances[seat.player_id]
         for seat in self.seats.values():
             seat.task = asyncio.create_task(self._read(seat))
 
@@ -258,6 +263,8 @@ class LiveRound:
         if msg["type"] == "cancel_all":
             await self.cancel_all(player_id)
             return
+        if msg["type"] in ("new", "modify"):
+            self._check_buying_power(seat, msg)
         if msg["type"] == "new" and "id" not in msg:
             msg["id"] = seat.next_id
             seat.next_id += 1
@@ -266,6 +273,38 @@ class LiveRound:
             await self._write(seat, msg)
         except ConnectionError as e:
             raise RequestError("the market is closed") from e
+
+    def _check_buying_power(self, seat: Seat, msg: dict[str, Any]) -> None:
+        """Refuses an order the seat's equity cannot carry (arena_kit.money): the same rule that
+        bots, lockstep rounds and offline tests follow."""
+        t = seat.tracker
+        assert t is not None
+        if msg["type"] == "modify":
+            order = t.orders.get(msg["id"]) or t.pending.get(msg["id"])
+            if order is None:
+                return  # the gateway refuses it as unknown
+            side, qty, price = order["side"], msg["quantity"], msg["price"]
+        else:
+            side, qty = msg["side"], msg["quantity"]
+            price = msg.get("price")
+            if price is None:  # a market order: the best price on the other side, if any
+                other = t.asks if side == "buy" else t.bids
+                price = other[0][0] if other else (t.last_trade or t.reference_price)
+        open_lots = sum(o.get("leaves", o.get("quantity", 0))
+                        for oid, o in [*t.orders.items(), *t.pending.items()]
+                        if o["side"] == side and oid != msg.get("id"))
+        state = t.state()
+        room = money.room(side, state.position, open_lots, state.equity, price)
+        if qty > room:
+            if money.max_lots(state.equity, price) == 0 and (
+                    (side == "buy" and state.position >= 0)
+                    or (side == "sell" and state.position <= 0)):
+                raise RequestError(f"you are bust: equity {money.dollars(state.equity)} does not "
+                                   f"cover a lot at {money.dollars(price)}; you can only close "
+                                   f"positions")
+            raise RequestError(f"not enough buying power: equity {money.dollars(state.equity)} "
+                               f"carries {room} more lot{'s' if room != 1 else ''} to "
+                               f"{side} at {money.dollars(price)}")
 
     async def cancel_all(self, player_id: int) -> None:
         """Cancels every order of the seat, paced to stay within the gateway's rate limit."""

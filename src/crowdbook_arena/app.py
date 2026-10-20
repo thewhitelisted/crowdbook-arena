@@ -74,7 +74,8 @@ def create_app(settings: Settings | None = None) -> Starlette:
 
     async def create_game(request: Request) -> JSONResponse:
         data = await body(request)
-        game, host, token = arena.create_game(data.get("name"), data.get("host_name"))
+        game, host, token = arena.create_game(data.get("name"), data.get("host_name"),
+                                              data.get("bankroll"))
         return JSONResponse({"code": game["code"], "token": token, "player": host}, 201)
 
     async def join_game(request: Request) -> JSONResponse:
