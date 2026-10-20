@@ -1,5 +1,6 @@
 // The game page: joining, the lobby, the trading screen of a live round, and results.
 import { get, knownPlayers, loadToken, post, saveToken, useToken } from "/static/api.js";
+import { botFills, setupBot, showBot } from "/static/bot.js";
 
 const $ = (id) => document.getElementById(id);
 const code = location.pathname.split("/").pop().toUpperCase();
@@ -17,6 +18,7 @@ let ladderCenter = null;
 let reconnectDelay = 500;
 
 $("code").textContent = code;
+setupBot(code);
 $("copy-link").onclick = () => navigator.clipboard?.writeText(`${location.origin}/g/${code}`);
 $("bot-command").textContent =
   `arena-kit join my_bot.py --server ${location.origin} --code ${code} --name my-bot`;
@@ -74,6 +76,7 @@ function handle(msg) {
   switch (msg.type) {
     case "welcome":
       me = msg.player;
+      showBot(me);
       $("me").textContent = `you are ${me.name}${me.is_host ? " (host)" : ""}`;
       $("status").textContent = "";
       setGame(msg.game);
@@ -602,6 +605,19 @@ function renderChart(s) {
     ctx.beginPath(); ctx.moveTo(Math.round(x(n.time / SEC)) + 0.5, top); ctx.lineTo(Math.round(x(n.time / SEC)) + 0.5, h - bottom); ctx.stroke();
   }
   ctx.setLineDash([]);
+  // The seat's own fills: a triangle up for each buy, down for each sell. The bot this tab runs
+  // has its fills drawn hollow.
+  for (const [t, side, p] of botFills(roundId).filter((f) => f[0] / SEC >= t0)) {
+    const cx = x(t / SEC), cy = y(p), r = 5;
+    ctx.strokeStyle = color(side === "buy" ? "--bid" : "--ask");
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    if (side === "buy") { ctx.moveTo(cx, cy - r); ctx.lineTo(cx - r, cy + r); ctx.lineTo(cx + r, cy + r); }
+    else { ctx.moveTo(cx, cy + r); ctx.lineTo(cx - r, cy - r); ctx.lineTo(cx + r, cy - r); }
+    ctx.closePath();
+    ctx.stroke();
+  }
+  ctx.lineWidth = 1;
   // The seat's own fills: a triangle up for each buy, down for each sell.
   for (const [t, side, p] of fills) {
     const cx = x(t / SEC), cy = y(p), r = 5;

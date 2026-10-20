@@ -55,3 +55,7 @@ th { color: var(--dim); font-weight: 500; text-align: left; }
 .chart-tip { position: absolute; top: 0; padding: 2px 6px; border-radius: 4px; background: #0c0f13; border: 1px solid var(--line); font: 12px ui-monospace, monospace; pointer-events: none; white-space: pre; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
 .briefing { white-space: pre-line; font-size: 13px; line-height: 1.45; margin-top: 6px; max-width: 72em; max-height: 8em; overflow-y: auto; }
+#bot-code { width: 100%; box-sizing: border-box; font: 13px ui-monospace, monospace; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px; tab-size: 4; }
+.bot-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; margin-top: 8px; }
+.bot-output { max-height: 180px; white-space: pre-wrap; font-size: 12px; }
+@media (max-width: 700px) { .bot-grid { grid-template-columns: 1fr; } }

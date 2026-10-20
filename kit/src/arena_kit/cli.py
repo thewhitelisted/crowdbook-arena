@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import inspect
 import json
 import os
 import statistics
@@ -23,7 +22,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from .bot import Bot
+from .bot import Bot, bot_from_module
 from .client import run
 from .markets import PUBLIC_KINDS
 from .practice import record
@@ -37,13 +36,10 @@ def load_bot(path: str) -> Bot:
     module = importlib.util.module_from_spec(spec)
     sys.path.insert(0, str(Path(path).resolve().parent))
     spec.loader.exec_module(module)
-    if isinstance(getattr(module, "bot", None), Bot):
-        return module.bot
-    classes = [c for _, c in inspect.getmembers(module, inspect.isclass)
-               if issubclass(c, Bot) and c is not Bot and c.__module__ == module.__name__]
-    if len(classes) != 1:
-        raise SystemExit(f"{path}: define `bot = MyBot()` or exactly one Bot subclass")
-    return classes[0]()
+    try:
+        return bot_from_module(module)
+    except ValueError as e:
+        raise SystemExit(f"{path}: {e}") from None
 
 
 def seeds(text: str) -> list[int]:

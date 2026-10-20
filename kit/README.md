@@ -100,5 +100,10 @@ The bot joins the game under that name and plays every round the host starts. Th
 bot's player token in `~/.crowdbook-arena/tokens.json`, so running the command again takes the
 same seat.
 
+Or, with no command at all, paste the file into the "Your bot" panel on the game page and press
+Deploy: it runs in the browser tab, in Pyodide, and plays as it would from `arena-kit join`. It can
+import the kit's `Bot`, `Quote`, `State`, `News`, `Fill` and `Trade`, and Python's standard
+library; `run_local` and other packages are not there.
+
 In a live round, the market runs on the wall clock. The kit turns each `Quote` into orders: a
 post-only order for each side, moved by a modify, and an immediate-or-cancel order for a take.
