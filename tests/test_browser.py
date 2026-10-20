@@ -5,6 +5,19 @@ import pytest
 playwright = pytest.importorskip("playwright.sync_api")
 
 
+def human_click(page, locator, hold_s=0.2):
+    # The cell is redrawn every update, so it can be replaced while it is measured: try again.
+    for _ in range(50):
+        box = locator.bounding_box()
+        if box:
+            break
+        page.wait_for_timeout(20)
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.wait_for_timeout(hold_s * 1000)
+    page.mouse.up()
+
+
 def test_two_tabs_play_a_live_round(server):
     errors = []
     with playwright.sync_playwright() as p:
@@ -39,9 +52,18 @@ def test_two_tabs_play_a_live_round(server):
         assert "/ 0:40" in b.text_content("#clock-text")
         assert "100 lots" in b.text_content("#limits")
 
-        # A bid from the ladder, then a market buy from the ticket.
-        b.locator("#ladder td.bidq:not(:empty)").nth(3).click()
-        b.wait_for_function("document.querySelectorAll('#orders tr').length >= 1")
+        # A bid from the ladder, clicked as a person clicks: the button held down for a fifth of
+        # a second, across several updates of the book.
+        human_click(b, b.locator("#ladder td.bidq:not(:empty)").nth(3))
+        b.wait_for_function("document.querySelectorAll('#orders tr').length >= 1",
+                            timeout=3000)
+        # Clicking the yellow order on the ladder cancels it, clicked the same way.
+        human_click(b, b.locator("#ladder td.mine:not(:empty)").first)
+        b.wait_for_function("document.querySelectorAll('#orders tr').length === 0",
+                            timeout=3000)
+        human_click(b, b.locator("#ladder td.bidq:not(:empty)").nth(3))
+        b.wait_for_function("document.querySelectorAll('#orders tr').length >= 1",
+                            timeout=3000)
         b.fill("#qty", "3")
         b.click("#buy-market")
         b.wait_for_function("document.getElementById('position').textContent !== '0'")
@@ -58,6 +80,13 @@ def test_two_tabs_play_a_live_round(server):
             "document.querySelectorAll('#ladder td.bidq:not(:empty)').length > 3")
         assert "watching" in c.text_content("#spectating")
         assert c.locator("#tape tr").count() > 0
+        # The Cancel button in the order list, held the same way.
+        human_click(b, b.locator("#orders button").first)
+        b.wait_for_function("document.querySelectorAll('#orders tr').length === 0",
+                            timeout=3000)
+        human_click(b, b.locator("#ladder td.bidq:not(:empty)").nth(3))
+        b.wait_for_function("document.querySelectorAll('#orders tr').length >= 1",
+                            timeout=3000)
         b.click("#cancel-all")
         b.wait_for_function("document.querySelectorAll('#orders tr').length === 0")
 
