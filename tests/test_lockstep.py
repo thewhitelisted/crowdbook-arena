@@ -21,6 +21,7 @@ class Sleepy(StarterBot):
     """The starter bot, too slow to answer its third turn in time."""
 
     def __init__(self, sleep_s=0.0, skip_turn=3):
+        super().__init__()
         self.n = 0
         self.sleep_s = sleep_s
         self.skip_turn = skip_turn
