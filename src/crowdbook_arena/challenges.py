@@ -66,10 +66,19 @@ class Challenge:
     def public(self) -> dict[str, Any]:
         return {"kind": self.kind, "title": self.title, "prompt": self.prompt, "data": self.data}
 
+    def explain(self, answer: dict[str, Any]) -> str:
+        """What an answer comes to, in words, for the results."""
+        return f"worth {self.value(answer):.2f}"
+
+    def setup(self) -> str:
+        """The challenge's numbers again, in a line, for the results."""
+        return ""
+
     def solution(self) -> dict[str, Any]:
         best = self.best()
         return {"answer": best, "value": round(self.value(best), 6),
-                "nothing": round(self.value(self.nothing()), 6)}
+                "nothing": round(self.value(self.nothing()), 6),
+                "explained": self.explain(best), "setup": self.setup()}
 
 
 class Auction(Challenge):
@@ -110,6 +119,18 @@ class Auction(Challenge):
     def best(self) -> dict[str, Any]:
         bid = max(range(0, self.worth + 1), key=lambda b: (self.value({"bid": b}), -b))
         return {"bid": bid}
+
+    def explain(self, answer: dict[str, Any]) -> str:
+        bid = answer["bid"]
+        if bid == 0:
+            return "stays out: no chance of winning, and nothing to pay"
+        return (f"wins {100 * self.win_chance(bid):.2f}% of the time, for a profit of "
+                f"{self.worth - bid} when it wins: an expected profit of "
+                f"{self.value(answer):.2f}")
+
+    def setup(self) -> str:
+        return (f"The crate was worth {self.worth}; {self.rivals} rivals each bid a whole number "
+                f"from {self.lo} to {self.hi}.")
 
 
 class Conversion(Challenge):
@@ -165,6 +186,14 @@ class Conversion(Challenge):
     def nothing(self) -> dict[str, Any]:
         return {"path": []}
 
+    def explain(self, answer: dict[str, Any]) -> str:
+        if not answer["path"]:
+            return f"no trades: {self.START} Shells"
+        return f"ends with {self.value(answer):.2f} Shells, from {self.START}"
+
+    def setup(self) -> str:
+        return f"You started with {self.START} Shells and could make up to {self.MAX_TRADES} trades."
+
     def best(self) -> dict[str, Any]:
         best, best_value = [], float(self.START)
         n = len(self.GOODS)
@@ -213,6 +242,16 @@ class Kelly(Challenge):
 
     def nothing(self) -> dict[str, Any]:
         return {"fraction": 0.0}
+
+    def explain(self, answer: dict[str, Any]) -> str:
+        v = self.value(answer)
+        if v == -math.inf:
+            return "stakes everything, and is ruined by the first loss"
+        return f"grows wealth by {100 * v:.2f}% a bet, on average in log terms"
+
+    def setup(self) -> str:
+        return (f"The bet won with probability {self.p:.2f} and paid {self.odds:.2f} for each "
+                f"shell staked.")
 
     def best(self) -> dict[str, Any]:
         f = self.p - (1 - self.p) / self.odds
@@ -284,7 +323,8 @@ class ChallengeRound:
             else:
                 scores[pid] = (round(self.challenge.score(answer), 6), {
                     "answered": True, "answer": answer,
-                    "value": round(self.challenge.value(answer), 6)})
+                    "value": round(self.challenge.value(answer), 6),
+                    "explained": self.challenge.explain(answer)})
         self._finished.set()
         await self._on_end(scores)
 
