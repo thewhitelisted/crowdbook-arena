@@ -24,6 +24,19 @@ SECOND = 1_000_000_000
 ARENA_IDS = 1_000_000_000  # the server numbers orders sent without an id from here
 
 
+def round_start_info(rnd: dict[str, Any] | None) -> dict[str, Any]:
+    """What a bot's on_start gets about a round from the server's description of it: the round,
+    its market, length and briefing, and when headlines come if it has news."""
+    if not rnd:
+        return {}
+    config = rnd.get("config") or {}
+    info = {"round": rnd.get("id"), "market": rnd.get("market"),
+            "duration_s": config.get("duration_s"), "briefing": config.get("briefing", "")}
+    if "news" in config:
+        info["news"] = config["news"]
+    return info
+
+
 def ws_url(server: str) -> str:
     parts = urlsplit(server if "://" in server else f"http://{server}")
     scheme = {"http": "ws", "https": "wss", "ws": "ws", "wss": "wss"}[parts.scheme]
@@ -34,10 +47,11 @@ class LiveDriver:
     """Turns a bot's quotes into orders in one live round."""
 
     def __init__(self, bot: Bot, tracker: SeatTracker, send: Callable[[dict[str, Any]], Any],
-                 interval: int = SECOND):
+                 interval: int = SECOND, info: dict[str, Any] | None = None):
         self.bot = bot
         self.t = tracker
         self.send = send
+        self.info = info or {}  # what on_start gets about the round, besides the seat's limits
         self.interval = interval
         self.next_turn: int | None = None
         self.trades: list[Trade] = []
@@ -64,7 +78,8 @@ class LiveDriver:
             return
         if not self.started:
             self.started = True
-            self.bot.on_start({"mode": "live", "max_position": self.t.max_position,
+            self.bot.on_start({**self.info, "mode": "live",
+                               "max_position": self.t.max_position,
                                "max_order_quantity": self.t.max_order_quantity,
                                "duration_ns": self.t.duration})
         if kind == "filled" or self.next_turn is None or self.t.time >= self.next_turn:
@@ -165,11 +180,16 @@ async def play(bot: Bot, server: str, token: str, *, rounds: int | None = None,
         tracker: SeatTracker | None = None
         driver: LiveDriver | None = None
         live_round: int | None = None
+        known: dict[int, dict[str, Any]] = {}  # the rounds the server has described, by id
         async for raw in ws:
             msg = json.loads(raw)
             if on_event:
                 on_event(msg)
             kind = msg.get("type")
+            if kind in ("welcome", "game") and msg["game"].get("current"):
+                known[msg["game"]["current"]["id"]] = msg["game"]["current"]
+            elif kind == "round_started":
+                known[msg["round"]["id"]] = msg["round"]
             if kind == "welcome":
                 me = msg["player"]
             elif kind == "error":
@@ -188,7 +208,8 @@ async def play(bot: Bot, server: str, token: str, *, rounds: int | None = None,
                 else:
                     tracker = SeatTracker()
                     tracker.load(msg["state"])
-                    driver = LiveDriver(bot, tracker, send)
+                    driver = LiveDriver(bot, tracker, send,
+                                        info=round_start_info(known.get(msg["round"])))
                     live_round = msg["round"]
             elif kind == "news" and driver and msg["round"] == live_round:
                 driver.news.append(News(msg["time"], msg["headline"], msg["change"]))
@@ -201,7 +222,8 @@ async def play(bot: Bot, server: str, token: str, *, rounds: int | None = None,
                     live_round = msg["round"]
                     s = msg["state"]
                     try:
-                        bot.on_start({"mode": "lockstep", "round": msg["round"],
+                        bot.on_start({**round_start_info(known.get(msg["round"])),
+                                      "mode": "lockstep", "round": msg["round"],
                                       "max_position": s["max_position"],
                                       "max_order_quantity": s["max_order_quantity"]})
                     except Exception:
@@ -220,6 +242,7 @@ async def play(bot: Bot, server: str, token: str, *, rounds: int | None = None,
                 if mine is not None:
                     bot.on_end(result)
                 done.append(result)
+                known.pop(msg["round"]["id"], None)
                 tracker = driver = None
                 live_round = None
                 if rounds is not None and len(done) >= rounds:

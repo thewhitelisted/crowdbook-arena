@@ -54,10 +54,17 @@
         <button id="stop-round" class="hidden">End the round now</button>
       </div>
       <div class="dim" id="market-description"></div>
+      <details class="market-only" id="market-briefing-box"><summary class="dim">What players are told</summary>
+        <div class="briefing" id="market-briefing"></div></details>
       <div class="error" id="host-error"></div>
     </div>
     <p class="dim" id="bot-hint">Bots join with the kit:
       <code id="bot-command"></code></p>
+  </section>
+
+  <section class="panel hidden" id="briefing-panel">
+    <details open><summary><h2 style="display:inline">Briefing <span class="dim" id="briefing-title"></span></h2></summary>
+      <div class="briefing" id="briefing"></div></details>
   </section>
 
   <section class="hidden" id="trading">

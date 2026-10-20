@@ -49,6 +49,30 @@ class MarketKind(Protocol):
         seconds."""
         ...
 
+    # Optional, as `jumps` is: `briefing(seed, duration_s) -> str`, what players are told before a
+    # round of this kind (who trades, the fees, the limits, the news and the score), without
+    # anything of the seed's path. Kinds without one are briefed with their description.
+
+
+def briefing_of(kind: MarketKind, seed: int, duration_s: int, news: str | None = None) -> str:
+    """The briefing for a round of this kind: the kind's own `briefing`, or its description,
+    and when headlines come out if the round has news (`news`, a key of NEWS_DELAYS)."""
+    brief = getattr(kind, "briefing", None)
+    text = str(brief(seed, duration_s)) if callable(brief) else kind.description
+    if news is not None and has_news(kind):
+        text = text.rstrip() + "\n\n" + _NEWS_LINES[news]
+    return text
+
+
+_NEWS_LINES = {
+    "instant": "Headlines: each jump in the true value is told to you the moment it happens.",
+    "experts": "Headlines: each jump in the true value is told to you about 2 seconds after it "
+               "happens, as the experts hear it.",
+    "crowd": "Headlines: each jump in the true value is told to you about 30 seconds after it "
+             "happens, with the crowd, after the experts have traded on it.",
+    "off": "Headlines: none this round. Watch the trades for jumps in the true value.",
+}
+
 
 def jumps_of(kind: MarketKind, seed: int, duration_s: int) -> list[Jump]:
     """The jumps in a kind's true value that make news, for kinds that have them (a `jumps`
@@ -103,9 +127,13 @@ class TemplateKind:
     title: str
     description: str
     template: str
+    brief: str = ""  # the briefing, with `{duration}` in it
 
     def scenario(self, seed: int, duration_s: int) -> str:
         return self.template.format(seed=int(seed), duration=f"{int(duration_s)}s")
+
+    def briefing(self, seed: int, duration_s: int) -> str:
+        return (self.brief or self.description).format(duration=_minutes(duration_s))
 
 
 # The seat every player trades from, the scoring of live rounds, and the decisions of stepped
@@ -219,6 +247,37 @@ def _template(fundamental: str, *, noise: int = 60, market_rate: float = 0.05, t
     return head + fundamental + exchange + seat + crowd
 
 
+def _minutes(duration_s: int) -> str:
+    m, s = divmod(int(duration_s), 60)
+    if not m:
+        return f"{s} seconds"
+    return f"{m} minute{'s' * (m != 1)}" + (f" {s} seconds" if s else "")
+
+
+def _brief(value: str, crowd: str) -> str:
+    """A public kind's briefing: its true value and crowd, and the rules every public kind
+    shares (set in _template and _SEAT)."""
+    return (
+        "The round lasts {duration}. One stock trades in a single order book, priced in ticks "
+        "(1 tick = 1 cent) and starting near 10,000.\n\n"
+        f"True value: {value}\n\n"
+        f"Who trades: {crowd}\n\n"
+        "Fees: a resting order that is filled earns 0.1 tick a lot; an order that takes from the "
+        "book pays 0.2 tick a lot.\n\n"
+        "Limits: at most 100 lots long or short and 20 lots an order, and no more than your "
+        "game balance buys at the price, counting open orders.\n\n"
+        "Score: your profit after fees, with what you hold at the end valued at what selling or "
+        "buying it back through the book would bring. It is added to your game balance."
+    )
+
+
+_PEOPLE = ("two market makers quoting both sides (one fast, 5 lots every quarter second; one "
+           "slower, 10 lots every second); {noise} noise traders who buy and sell at random; "
+           "{trend} trend followers who buy rises and sell falls; two experts who see the true "
+           "value {lag} late and trade when the price is 2 ticks or more away from it; and 30 "
+           "followers who see it 30 seconds late, roughly.")
+
+
 CALM = TemplateKind(
     name="calm",
     title="Calm",
@@ -227,6 +286,8 @@ CALM = TemplateKind(
         "traders, trend followers, and traders who see the true value early or late."
     ),
     template=_template('\n[fundamental]\nvolatility = 0.5\nstep = "250ms"\n'),
+    brief=_brief("a random walk, about half a tick a second; no jumps and no headlines.",
+                 _PEOPLE.format(noise=60, trend=5, lag="1 second")),
 )
 
 @dataclass(frozen=True)
@@ -260,6 +321,10 @@ class NewsKind:
         return path, jumps
 
     fallback: str = ""        # the engine's own jumps, for a crowdbook without value paths
+    brief: str = ""
+
+    def briefing(self, seed: int, duration_s: int) -> str:
+        return self.brief.format(duration=_minutes(duration_s))
 
     def has_news(self) -> bool:
         return engine_has_value_path()
@@ -288,6 +353,9 @@ NEWS = NewsKind(
     fallback=_template(
         '\n[fundamental]\nvolatility = 0.3\nstep = "250ms"\njump_rate = 0.0167\njump_size = 8.0\n',
         expert_lag="2s"),
+    brief=_brief("a random walk of about a third of a tick a second, which jumps without "
+                 "warning about once a minute, by about 8 ticks up or down.",
+                 _PEOPLE.format(noise=60, trend=5, lag="2 seconds")),
 )
 
 TRENDING = TemplateKind(
@@ -299,6 +367,10 @@ TRENDING = TemplateKind(
     ),
     template=_template('\n[fundamental]\nvolatility = 1.0\nstep = "250ms"\n', trend=15,
                        market_rate=0.08),
+    brief=_brief("a random walk of about a tick a second; no jumps and no headlines.",
+                 _PEOPLE.format(noise=60, trend=15, lag="1 second")
+                 + " The noise traders send market orders more often than in Calm, and the "
+                   "trend followers push prices past the true value before they come back."),
 )
 
 PUBLIC_KINDS: dict[str, MarketKind] = {k.name: k for k in (CALM, NEWS, TRENDING)}

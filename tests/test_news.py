@@ -37,6 +37,10 @@ class NewsTrader(Bot):
 
     def __init__(self):
         self.heard = []
+        self.started = None
+
+    def on_start(self, info):
+        self.started = info
 
     def on_turn(self, state):
         for n in state.news:
@@ -108,6 +112,12 @@ def test_lockstep_news_matches_offline(newsy):
     offline = NewsTrader()
     local = run_local(offline, Newsy(), seed=7, duration_s=30, news="instant")
     assert trader.heard == offline.heard and len(offline.heard) == 2
+    # A kind without a briefing of its own is briefed with its description, and the news.
+    brief = ("calm, with headlines\n\nHeadlines: each jump in the true value is told to you "
+             "the moment")
+    assert trader.started["briefing"].startswith(brief)
+    assert trader.started["briefing"] == offline.started["briefing"]
+    assert trader.started["market"] == "newsy" and trader.started["news"] == "instant"
     assert res["result"]["score"] == pytest.approx(local.score)
 
 
@@ -137,6 +147,7 @@ def test_live_news_reaches_screens_and_bots(newsy):
     assert first["headline"] == "Good news: value up about 8" and first["time"] == 5 * S
     assert second["change"] == -3
     assert [h for _, h, _ in trader.heard] == [first["headline"], second["headline"]]
+    assert trader.started["mode"] == "live" and "about 2 seconds" in trader.started["briefing"]
     info = server.http.get(f"/api/games/{code}").json()
     assert info["rounds"][0]["config"]["news"] == "experts"
 

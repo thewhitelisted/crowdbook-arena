@@ -88,6 +88,9 @@ Market kinds can come from a package installed only on the server, through the
 2. Put the wheel in `plugins/`, which git ignores apart from its placeholder.
 3. Rebuild with `docker compose up -d --build`.
 
+A kind can have a `briefing(seed, duration_s)` method returning what players are told before a
+round; without one, players get the kind's description. Keep the round's path out of it.
+
 The arena logs the kinds it loads. `ARENA_MARKET_KINDS` in `.env` limits which kinds games may use.
 The wheel never enters this repository.
 

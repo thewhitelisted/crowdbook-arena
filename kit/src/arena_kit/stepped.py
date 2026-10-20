@@ -16,7 +16,7 @@ import crowdbook_learn
 
 from .bot import Bot, Fill, News, Quote, State, Trade
 from . import money
-from .markets import MarketKind, headlines, public_kind
+from .markets import MarketKind, briefing_of, has_news, headlines, public_kind
 from .money import DEFAULT_BANKROLL
 
 _S = {name: i for i, name in enumerate(crowdbook_learn.STATE_NAMES)}
@@ -138,6 +138,11 @@ class SteppedMarket:
         return float(self._info["score"][0]) / 1000
 
     @property
+    def value(self) -> float:
+        """The market's true value now, for recordings; never shown to a bot."""
+        return float(self._info["value"][0])
+
+    @property
     def info(self) -> dict[str, Any]:
         return {"seed": self.seed, "turns": self.turns}
 
@@ -168,6 +173,8 @@ def run_local(bot: Bot, market: str | MarketKind = "calm", seed: int = 1,
                       headlines(kind, seed, duration_s, news), bankroll * money.DOLLAR)
     first = m.state()
     bot.on_start({"market": kind.name, "seed": seed, "duration_s": duration_s, "mode": "local",
+                  "briefing": briefing_of(kind, seed, duration_s,
+                                          news if has_news(kind) else None),
                   "max_position": first.max_position,
                   "max_order_quantity": first.max_order_quantity})
     state = first

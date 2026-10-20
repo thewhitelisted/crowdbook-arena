@@ -3,7 +3,8 @@
 
 An entry point names an object with `name`, `title`, `description` and
 `scenario(seed, duration_s) -> str` (arena_kit.MarketKind), or a function returning one or a list
-of them. A package installed only on the server, at deploy time, adds kinds that players cannot
+of them. Optional methods: `jumps(seed, duration_s)` for news, and `briefing(seed, duration_s)`
+for what players are told before a round (the description if there is none). A package installed only on the server, at deploy time, adds kinds that players cannot
 read or run offline.
 """
 

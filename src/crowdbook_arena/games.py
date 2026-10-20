@@ -10,7 +10,7 @@ from typing import Any
 from starlette.websockets import WebSocket
 
 from arena_kit import money
-from arena_kit.markets import NEWS_DELAYS, MarketKind, has_news, headlines
+from arena_kit.markets import NEWS_DELAYS, MarketKind, briefing_of, has_news, headlines
 
 from .auth import new_code, new_token, token_hash
 from .config import Settings
@@ -138,7 +138,8 @@ class GameHub:
         return {
             "code": self.game["code"], "name": self.game["name"], "players": players,
             "bankroll": store.game(self.game["id"])["bankroll"],
-            "rounds": [round_info(r) for r in store.rounds(self.game["id"])],
+            # Past rounds without their briefings, which would only make every update longer.
+            "rounds": [round_info(r, with_briefing=False) for r in store.rounds(self.game["id"])],
             "current": round_info(self.round) if self.round else None,
             "markets": [{"name": k.name, "title": k.title, "description": k.description,
                          "news": has_news(k)} for k in self.arena.kinds.values()],
@@ -175,6 +176,7 @@ class GameHub:
                 if delay not in NEWS_DELAYS:
                     raise GameError(f"news: one of {', '.join(NEWS_DELAYS)}")
                 config["news"] = delay
+            config["briefing"] = briefing(kind_obj, seed, duration, config.get("news"))
             if kind == "live":
                 speed = spec.get("speed", 1)
                 if (isinstance(speed, bool) or not isinstance(speed, (int, float))
@@ -340,10 +342,23 @@ class GameHub:
         await runner.request(player["id"], msg)
 
 
-def round_info(r: dict[str, Any]) -> dict[str, Any]:
+def round_info(r: dict[str, Any], with_briefing: bool = True) -> dict[str, Any]:
+    config = r["config"]
+    if not with_briefing:
+        config = {k: v for k, v in config.items() if k != "briefing"}
     return {"id": r["id"], "number": r["number"], "kind": r["kind"], "market": r["market"],
-            "status": r["status"], "config": r["config"], "started_at": r["started_at"],
+            "status": r["status"], "config": config, "started_at": r["started_at"],
             "ended_at": r["ended_at"]}
+
+
+def briefing(kind: MarketKind, seed: int, duration_s: int, news: str | None) -> str:
+    """What players are told before a round of this kind; a kind's briefing that fails gives
+    way to its description."""
+    try:
+        return briefing_of(kind, seed, duration_s, news)
+    except Exception:
+        log.exception("market kind %s gave no briefing", kind.name)
+        return kind.description
 
 
 def _int(value: Any, name: str, lo: int, hi: int) -> int:

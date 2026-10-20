@@ -7,6 +7,7 @@
     POST /api/games/{code}/rounds/stop      (host)
     GET  /api/games/{code}/rounds/{number}                               -> a round and its results
     GET  /api/games/{code}/leaderboard                                   -> the game's leaderboards
+    GET  /api/kinds/{name}/briefing?duration_s=&news=                    -> a market's briefing
     WS   /ws    first message {"type": "auth", "token"}; then order requests
 
 Host requests carry the host's token as `Authorization: Bearer <token>`.
@@ -28,9 +29,11 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from arena_kit.markets import NEWS_DELAYS, has_news
+
 from .config import Settings
 from .db import Store
-from .games import Arena, Connection, GameError, round_info
+from .games import Arena, Connection, GameError, briefing, round_info
 from .kinds import load_kinds
 from .live import RequestError
 
@@ -117,6 +120,21 @@ def create_app(settings: Settings | None = None) -> Starlette:
         return JSONResponse([{"name": k.name, "title": k.title, "description": k.description}
                              for k in arena.kinds.values()])
 
+    async def kind_briefing(request: Request) -> JSONResponse:
+        """A market's briefing, as players will get it, for a host choosing the market."""
+        kind = arena.kinds.get(request.path_params["name"])
+        if kind is None:
+            raise GameError("unknown market", 404)
+        duration = request.query_params.get("duration_s", "300")
+        if not duration.isdigit() or not 5 <= int(duration) <= 7 * 24 * 3600:
+            raise GameError("duration_s: a whole number of seconds")
+        news = request.query_params.get("news", "experts")
+        if news not in NEWS_DELAYS:
+            raise GameError(f"news: one of {', '.join(NEWS_DELAYS)}")
+        text = await asyncio.to_thread(briefing, kind, 0, int(duration),
+                                       news if has_news(kind) else None)
+        return JSONResponse({"name": kind.name, "briefing": text})
+
     async def ws_endpoint(ws: WebSocket) -> None:
         await ws.accept()
         try:
@@ -181,6 +199,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
             Route("/", page),
             Route("/g/{code}", game_page),
             Route("/api/kinds", kinds),
+            Route("/api/kinds/{name}/briefing", kind_briefing),
             Route("/api/games", create_game, methods=["POST"]),
             Route("/api/games/{code}", get_game),
             Route("/api/games/{code}/join", join_game, methods=["POST"]),
