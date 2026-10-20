@@ -25,7 +25,7 @@ from pathlib import Path
 from .bot import Bot, bot_from_module
 from .client import run
 from .markets import PUBLIC_KINDS
-from .practice import record
+from .practice import record_all
 from .stepped import run_local
 
 
@@ -131,10 +131,11 @@ def main(argv: list[str] | None = None) -> None:
         if not 5 <= args.duration <= 7200:
             raise SystemExit("--duration: from 5 to 7200 simulated seconds")
         for seed in seeds(args.seeds):
-            rec = record(args.market, seed, args.duration, args.news)
-            paths = rec.write(args.out)
-            print(f"seed {seed:5}: {len(rec.ticks)} ticks, {len(rec.trades)} trades, "
-                  f"{len(rec.headlines)} headlines -> {', '.join(p.name for p in paths)}")
+            for rec in record_all(args.market, seed, args.duration, args.news):
+                paths = rec.write(args.out)
+                print(f"seed {seed:5}{' ' + rec.asset if rec.asset else ''}: {len(rec.ticks)} "
+                      f"ticks, {len(rec.trades)} trades, {len(rec.headlines)} headlines -> "
+                      f"{', '.join(p.name for p in paths)}")
     elif args.command == "join":
         bot = load_bot(args.bot)
         token = args.token or join_token(args.server, args.code, args.name)

@@ -8,8 +8,10 @@ Buying power: a player may hold, counting their open orders as if they all fille
 lots either way as their equity buys at the order's price, where equity is the balance they
 started the round with, plus the cash their trades brought in or paid out, less fees, plus their
 position at the middle of the market. A long position is paid for in full and a short one needs
-the same amount set aside. A player whose equity does not cover a single lot is bust: they can
-close positions but not open them.
+the same amount set aside. In a round with several assets, one bankroll carries them all: the
+equity counts every asset's trades, and each asset's buying power is that equity less what the
+other assets commit (`committed`). A player whose equity does not cover a single lot is bust:
+they can close positions but not open them.
 """
 
 from __future__ import annotations
@@ -51,3 +53,10 @@ def room(side: str, position: int, open_lots: int, equity_now: float, price: flo
     if side == "buy":
         return max(0, limit - position - open_lots)
     return max(0, limit + position - open_lots)
+
+
+def committed(position: int, open_buy: int, open_sell: int, at: float) -> float:
+    """What a position in one asset ties up of the bankroll, its open orders counted as if they
+    all filled: the larger of the two ways it could end up, at the mark. In a round with several
+    assets, each one's buying power is the equity less what the others commit."""
+    return max(abs(position + open_buy), abs(position - open_sell)) * at

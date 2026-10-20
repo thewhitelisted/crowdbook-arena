@@ -26,10 +26,17 @@ function usd(cents) {
   return `${v < 0 ? "-" : v > 0 ? "+" : ""}$${Math.abs(v).toFixed(2)}`;
 }
 function px(ticks) { return (Number(ticks) / 100).toFixed(2); }
+function esc(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
 function level(l) { return l ? `${l[1]} @ ${px(l[0])}` : "none"; }
 
-// The bot's fills in a round, as [time, side, price, quantity], for the price chart.
-export function botFills(roundId) { return round === roundId ? fills : []; }
+// The bot's fills in a round, as [time, side, price, quantity, asset?], for the price chart of
+// that asset (in a round with several).
+export function botFills(roundId, asset = null) {
+  if (round !== roundId) return [];
+  return fills.filter((f) => f[4] === undefined || f[4] === asset);
+}
 
 export function setupBot(gameCode) {
   code = gameCode;
@@ -142,13 +149,18 @@ function onReport(r) {
 function showTurn(r) {
   round = r.round;
   fills = r.fills;
-  $("bot-position").textContent = r.position > 0 ? `+${r.position}` : `${r.position}`;
+  const signed = (n) => (n > 0 ? `+${n}` : `${n}`);
+  $("bot-position").textContent = r.positions
+    ? Object.entries(r.positions).map(([k, v]) => `${k} ${signed(v)}`).join(" · ")
+    : signed(r.position);
   $("bot-pnl").textContent = usd(r.pnl);
   $("bot-pnl").className = `v ${r.pnl > 0 ? "pos" : r.pnl < 0 ? "neg" : ""}`;
   $("bot-fees").textContent = usd(-r.fees);
-  $("bot-quotes").textContent = `bid ${level(r.resting.bid)}, offer ${level(r.resting.ask)}`;
-  $("bot-fills").innerHTML = fills.slice(-FILLS_SHOWN).reverse().map(([, side, price, qty]) =>
-    `<tr><td class="${side === "buy" ? "pos" : "neg"}">${side === "buy" ? "buy" : "sell"}</td><td class="num">${Number(qty)}</td>` +
+  $("bot-quotes").textContent = r.positions
+    ? Object.entries(r.resting).map(([k, q]) => `${k}: bid ${level(q.bid)}, offer ${level(q.ask)}`).join("; ")
+    : `bid ${level(r.resting.bid)}, offer ${level(r.resting.ask)}`;
+  $("bot-fills").innerHTML = fills.slice(-FILLS_SHOWN).reverse().map(([, side, price, qty, sym]) =>
+    `<tr><td class="${side === "buy" ? "pos" : "neg"}">${side === "buy" ? "buy" : "sell"}${sym ? ` ${esc(sym)}` : ""}</td><td class="num">${Number(qty)}</td>` +
     `<td class="num">${px(price)}</td></tr>`).join("")
     || '<tr><td class="dim">No fills yet.</td></tr>';
 }

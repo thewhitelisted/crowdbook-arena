@@ -57,6 +57,25 @@ Prices are in ticks, quantities in lots, and cash and P&L in tick-lots. `on_star
 before it starts: who trades, the fees, the limits, when headlines come and how the score is
 counted. It is the same offline, in lockstep rounds and in live ones.
 
+### Several assets
+
+In a `pair` or `basket` round, `on_turn` gets a `Portfolio` instead of a `State`:
+`portfolio.assets` holds each asset's `State` by symbol, `portfolio.equity` counts every asset,
+and `portfolio.room(symbol, side, price)` is the buying power on one asset after what the others
+tie up. Answer with a dict of `Quote`s by symbol; an asset left out keeps its quotes.
+
+```python
+class PairBot(Bot):
+    def on_turn(self, p):
+        d, lan = p.assets["DRIFT"], p.assets["LANTERN"]
+        if d.mid and lan.mid and lan.mid > 8000 + 0.8 * (d.mid - 10000) + 10:
+            return {"LANTERN": Quote(take=-5)}  # Lanterns dear next to Driftwood: sell some
+```
+
+`on_start(info)["assets"]` names the assets. Turns come every simulated second and whenever one of
+the bot's orders fills in any asset; every asset is shown as of that moment or before, never
+after, offline, in lockstep and live alike.
+
 ## Test it offline
 
 ```bash
@@ -87,7 +106,8 @@ simulated time, into `data/`:
   how late, as the host does);
 - `news-1-briefing.txt`: the briefing.
 
-The same seed always gives the same files. From Python, `arena_kit.practice.record("news",
+The same seed always gives the same files. For `pair` and `basket`, each asset gets its own
+files (`pair-1-DRIFT-book.csv`, `pair-1-LANTERN-book.csv`, ...), all from the same round. From Python, `arena_kit.practice.record("news",
 seed=1)`. Only the public kinds can be recorded.
 
 ## Play it in a game

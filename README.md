@@ -179,6 +179,8 @@ Public market kinds come from the kit (`arena-kit markets`):
 | `calm` | Sea Salt | Calm but always moving: small, steady drift and noise, no news. |
 | `news` | Pearls | Quiet stretches, then sharp jumps when news breaks, big enough to matter. The well-informed hear first, the crowd later. Players can get a headline too (see below). |
 | `trending` | Coral | Volatile and trend-prone: the fair value runs one way for a while, then turns, and moves overshoot and come back. |
+| `pair` | Driftwood & Lanterns | Two assets: Lanterns follow four fifths of Driftwood's moves, plus a gap that wanders and comes back. |
+| `basket` | Fruit Crate | Coconuts, Mangoes, and a Fruit Crate holding one of each, which trades near its contents' worth, give or take a premium that comes and goes. |
 
 Every kind has a pack of well-informed traders who keep the price near the fair value and pick off
 stale quotes, so quoting blindly costs money; a careful maker can still profit in the calmer ones.
@@ -218,6 +220,20 @@ stay on the server: players cannot read them or test against them offline.
 
 Scores are profit after fees, in tick-lots, with any position left at the end valued at what
 closing it through the book would bring.
+
+### Pairs and baskets
+
+`pair` and `basket` rounds have several linked assets. Each asset trades in its own market, with
+its own book and crowd, and the arena draws their fair values together from the round's seed, so
+the prices are linked as the values are. The crowd in each market knows only its own asset, so
+the links are there to be traded: a Lantern cheap next to Driftwood, a crate dear next to a
+coconut and a mango.
+
+One bankroll carries every asset. Equity counts the trades in all of them, and each asset's
+buying power is that equity less what the others tie up: each other asset's position, its open
+orders counted as filled, at the mark. Screens show a tab for each asset, with its price, position
+and P&L; the book, chart and ticket follow the tab chosen. Orders name their asset (`"asset":
+"LANTERN"` in the WebSocket protocol). Bots get every asset at once (see the kit's README).
 
 ## Settings
 

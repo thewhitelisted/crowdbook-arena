@@ -16,7 +16,7 @@ import traceback
 import types
 from typing import Any, Callable
 
-from .bot import Bot, Quote, State, bot_from_module
+from .bot import Bot, Portfolio, Quote, State, bot_from_module
 from .client import Session
 
 PACKAGE_FILES = ("bot.py", "money.py", "tracker.py", "client.py", "browser.py")
@@ -41,7 +41,9 @@ class Watched(Bot):
                     market=info.get("market"))
         self.bot.on_start(info)
 
-    def on_turn(self, state: State) -> Quote | None:
+    def on_turn(self, state: State | Portfolio) -> Any:
+        if isinstance(state, Portfolio):
+            return self._portfolio_turn(state)
         self.fills.extend([f.time, f.side, f.price, f.quantity] for f in state.fills)
         del self.fills[:-FILLS_KEPT]
         quote = self.bot.on_turn(state)
@@ -52,6 +54,21 @@ class Watched(Bot):
                     quote=quote.to_json() if isinstance(quote, Quote) else None,
                     fills=self.fills)
         return quote
+
+    def _portfolio_turn(self, p: Portfolio) -> Any:
+        for sym, a in p.assets.items():
+            self.fills.extend([f.time, f.side, f.price, f.quantity, sym] for f in a.fills)
+        self.fills.sort(key=lambda f: f[0])
+        del self.fills[:-FILLS_KEPT]
+        answer = self.bot.on_turn(p)
+        self.report("turn", round=self.round, mode=self.mode, time=p.time,
+                    time_left=p.time_left,
+                    position=sum(a.position for a in p.assets.values()),
+                    positions={s: a.position for s, a in p.assets.items()},
+                    pnl=p.equity - p.balance, fees=sum(a.fees for a in p.assets.values()),
+                    resting={s: {"bid": a.my_bid, "ask": a.my_ask} for s, a in p.assets.items()},
+                    fills=self.fills)
+        return answer
 
     def on_end(self, result: dict[str, Any]) -> None:
         mine = result.get("result") or {}

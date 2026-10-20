@@ -11,12 +11,12 @@ from typing import Any
 from starlette.websockets import WebSocket
 
 from arena_kit import money
-from arena_kit.markets import NEWS_DELAYS, MarketKind, briefing_of, has_news, headlines
+from arena_kit.markets import NEWS_DELAYS, MarketKind, briefing_of, has_news, headlines, is_linked
 
 from .auth import new_code, new_token, token_hash
 from .config import Settings
 from .db import Store
-from .live import LiveRound, RequestError
+from .live import LiveRound, MultiLiveRound, RequestError
 from .challenges import KINDS as CHALLENGES, AnswerError, ChallengeRound, make as make_challenge
 from .leaderboard import leaderboards
 from .lockstep import LockstepRound
@@ -25,6 +25,9 @@ log = logging.getLogger(__name__)
 
 NAME_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-.'")
 SEND_QUEUE = 2000  # messages a connection may fall behind by before it is dropped
+
+
+LIVE = (LiveRound, MultiLiveRound)
 
 
 class GameError(Exception):
@@ -87,7 +90,7 @@ class GameHub:
         self.game = game
         self.conns: dict[int, set[Connection]] = {}
         self.round: dict[str, Any] | None = None
-        self.runner: LiveRound | LockstepRound | ChallengeRound | None = None
+        self.runner: LiveRound | MultiLiveRound | LockstepRound | ChallengeRound | None = None
         self.ready_check: ReadyCheck | None = None
         self.lock = asyncio.Lock()
 
@@ -101,7 +104,7 @@ class GameHub:
         conn.send({"type": "welcome", "player": player, "game": self.info()})
         conn.send({"type": "leaderboard", "boards": self.leaderboard()})
         runner = self.runner
-        if isinstance(runner, LiveRound) and self.round and self.ready_check is None:
+        if isinstance(runner, LIVE) and self.round and self.ready_check is None:
             snap = runner.snapshot(player["id"])
             conn.send({"type": "live_snapshot", "round": self.round["id"], "seated": snap is not None,
                        "state": snap or runner.any_snapshot()})
@@ -123,7 +126,7 @@ class GameHub:
                 await self.begin_if_ready()
             except GameError:
                 pass
-        elif not conns and isinstance(self.runner, LiveRound):
+        elif not conns and isinstance(self.runner, LIVE):
             # No screen or bot left to watch the seat's orders: take them out of the book.
             await self.runner.cancel_all(player_id)
         elif not conns and isinstance(self.runner, LockstepRound):
@@ -197,6 +200,9 @@ class GameHub:
                     raise GameError(f"news: one of {', '.join(NEWS_DELAYS)}")
                 config["news"] = delay
             config["briefing"] = briefing(kind_obj, seed, duration, config.get("news"))
+            linked = is_linked(kind_obj)
+            if linked:
+                config["assets"] = {a.symbol: a.title for a in kind_obj.assets}
             if kind == "live":
                 speed = spec.get("speed", 1)
                 if (isinstance(speed, bool) or not isinstance(speed, (int, float))
@@ -213,7 +219,8 @@ class GameHub:
             if not players:
                 raise GameError("no players")
             rnd = self.arena.store.add_round(self.game["id"], kind, market, seed, config)
-            scenario = kind_obj.scenario(seed, duration)
+            scenario = (kind_obj.scenarios(seed, duration) if linked
+                        else kind_obj.scenario(seed, duration))
             if "news" in config:
                 news = headlines(kind_obj, seed, duration, config["news"])
             balances = {p["id"]: p["balance"] for p in players}
@@ -221,13 +228,16 @@ class GameHub:
                                                       balances=balances)
             try:
                 if kind == "live":
-                    runner: LiveRound | LockstepRound = LiveRound(
-                        round_id=rnd["id"], scenario=scenario, seed=seed, duration_s=duration,
+                    common = dict(
+                        round_id=rnd["id"], seed=seed, duration_s=duration,
                         speed=config["speed"], player_ids=[p["id"] for p in players],
                         crowdbook=settings.crowdbook, work_dir=settings.work_dir, send=self.send,
                         on_end=on_end, rate_limit=settings.rate_limit,
                         feed_interval_ms=settings.feed_interval_ms, watch=self._watchers,
-                        news=news, balances=balances, announce=self.broadcast)
+                        balances=balances, announce=self.broadcast)
+                    runner: LiveRound | MultiLiveRound | LockstepRound = (
+                        MultiLiveRound(scenarios=scenario, **common) if linked
+                        else LiveRound(scenario=scenario, news=news, **common))
                 else:
                     runner = LockstepRound(
                         round_id=rnd["id"], scenario=scenario, seed=seed,
@@ -237,7 +247,7 @@ class GameHub:
                         balances=balances,
                         on_progress=self._lockstep_progress, on_end=on_end)
                 self.round, self.runner = rnd, runner
-                if isinstance(runner, LiveRound):
+                if isinstance(runner, LIVE):
                     # The market waits while the players read the briefing.
                     self.ready_check = ReadyCheck(
                         [p["id"] for p in players],
@@ -253,7 +263,7 @@ class GameHub:
                 if not isinstance(e, Exception):
                     raise
                 raise GameError(f"the round did not start: {e}", 500) from e
-        if isinstance(runner, LiveRound):
+        if isinstance(runner, LIVE):
             await self.begin_if_ready()  # at once if nobody needs to read the briefing
         await self.broadcast_info()
         return round_info(rnd)
@@ -300,7 +310,7 @@ class GameHub:
         reading (or `force`); True if it opened. Raises GameError if it could not start."""
         async with self.lock:
             check, rnd, runner = self.ready_check, self.round, self.runner
-            if check is None or rnd is None or not isinstance(runner, LiveRound):
+            if check is None or rnd is None or not isinstance(runner, LIVE):
                 return False
             if not force and self.waiting():
                 return False

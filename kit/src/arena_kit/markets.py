@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 SECOND = 1_000_000_000
 
@@ -238,8 +238,8 @@ def _template(fundamental: str, *, noise: int = 60, market_rate: float = 0.05, t
               trend_size: int = 3, trend_max: int = 30, experts: int = 2,
               expert_interval: str = "2s", expert_size: int = 3, expert_threshold: float = 2.0,
               expert_max: int = 300, expert_lag: str = "1s", max_position: int = 100,
-              max_order: int = 20) -> str:
-    head = 'seed = {seed}\nduration = "{duration}"\nreference_price = 10000\n'
+              max_order: int = 20, reference: int = 10000) -> str:
+    head = f'seed = {{seed}}\nduration = "{{duration}}"\nreference_price = {reference}\n'
     exchange = "\n[exchange]\ndepth_levels = 10\nmaker_fee = -0.1\ntaker_fee = 0.2\n"
     seat = _SEAT.format(max_position=max_position, max_order=max_order)
     crowd = _CROWD.format(noise=noise, market_rate=market_rate, trend=trend,
@@ -409,7 +409,172 @@ TRENDING = PathKind(
                  _CROWD_TEXT.format(trend="a pack of trend followers who chase every move")),
 )
 
-PUBLIC_KINDS: dict[str, MarketKind] = {k.name: k for k in (CALM, NEWS, TRENDING)}
+# Rounds with several linked assets: each asset trades in its own market, with its own book, and
+# their fair values are drawn together, so that the prices are linked as the values are.
+
+
+@dataclass(frozen=True)
+class Asset:
+    symbol: str      # short, upper case: how bots and messages name it
+    title: str       # what screens call it
+    reference: int   # ticks: where its fair value starts
+
+
+def is_linked(kind: Any) -> bool:
+    """Whether a kind's rounds have several linked assets (a `LinkedKind`)."""
+    return callable(getattr(kind, "scenarios", None))
+
+
+@dataclass(frozen=True)
+class LinkedKind:
+    """A kind of round with several assets whose fair values move together. A subclass draws
+    the values (`values`); each asset's market gets its own as a recorded path."""
+
+    name: str
+    title: str
+    description: str
+    assets: tuple[Asset, ...]
+    brief: str = ""
+    step_s: float = 0.25
+
+    def values(self, seed: int, duration_s: int) -> dict[str, list[float]]:
+        """Each asset's fair value at every step of the round, from the start."""
+        raise NotImplementedError
+
+    def has_news(self) -> bool:
+        return False
+
+    def briefing(self, seed: int, duration_s: int) -> str:
+        return self.brief.format(duration=_minutes(duration_s))
+
+    def scenarios(self, seed: int, duration_s: int) -> dict[str, str]:
+        """Each asset's scenario for a round, by symbol."""
+        values = self.values(seed, duration_s)
+        out = {}
+        for asset in self.assets:
+            points = ", ".join(f"[{i * self.step_s:g}, {v:.3f}]"
+                               for i, v in enumerate(values[asset.symbol]))
+            template = _template('\n[fundamental]\npath = [{path}]\n', expert_lag="500ms",
+                                 reference=asset.reference, **_INFORMED)
+            out[asset.symbol] = template.format(seed=int(seed), duration=f"{int(duration_s)}s",
+                                                path=points)
+        return out
+
+    def scenario(self, seed: int, duration_s: int) -> str:
+        raise TypeError(f"{self.name} has several assets: use scenarios()")
+
+    def _steps(self, duration_s: int) -> int:
+        return int(duration_s / self.step_s) + 1
+
+
+def _walk(rng: random.Random, start: float, volatility: float, n: int, dt: float) -> list[float]:
+    out, v = [start], start
+    for _ in range(n - 1):
+        v += rng.gauss(0, volatility * math.sqrt(dt))
+        out.append(v)
+    return out
+
+
+def _reverting(rng: random.Random, sd: float, half_life_s: float, n: int, dt: float) -> list[float]:
+    """A gap that wanders but is pulled back to zero (an Ornstein-Uhlenbeck process), with
+    standard deviation `sd` in the long run."""
+    k = math.log(2) / half_life_s
+    a = math.exp(-k * dt)
+    shock = sd * math.sqrt(1 - a * a)
+    out, x = [], rng.gauss(0, sd)
+    for _ in range(n):
+        out.append(x)
+        x = a * x + rng.gauss(0, shock)
+    return out
+
+
+@dataclass(frozen=True)
+class PairKind(LinkedKind):
+    """Two assets: the second follows `beta` times the first's moves, plus a gap that reverts to
+    its mean."""
+
+    volatility: float = 2.5   # the first asset's, ticks per square root of a second
+    beta: float = 0.8
+    gap_sd: float = 12.0      # ticks
+    gap_half_life_s: float = 20.0
+
+    def values(self, seed: int, duration_s: int) -> dict[str, list[float]]:
+        rng = random.Random(f"pair-path:{seed}")
+        a, b = self.assets
+        n = self._steps(duration_s)
+        first = _walk(rng, a.reference, self.volatility, n, self.step_s)
+        gap = _reverting(rng, self.gap_sd, self.gap_half_life_s, n, self.step_s)
+        second = [b.reference + self.beta * (x - a.reference) + g for x, g in zip(first, gap)]
+        return {a.symbol: first, b.symbol: second}
+
+
+@dataclass(frozen=True)
+class BasketKind(LinkedKind):
+    """Components that wander on their own, and a basket (the last asset) worth one of each,
+    plus a premium that reverts to nothing."""
+
+    volatility: float = 2.0
+    premium_sd: float = 10.0
+    premium_half_life_s: float = 20.0
+
+    def values(self, seed: int, duration_s: int) -> dict[str, list[float]]:
+        rng = random.Random(f"basket-path:{seed}")
+        *parts, basket = self.assets
+        n = self._steps(duration_s)
+        walks = {p.symbol: _walk(rng, p.reference, self.volatility, n, self.step_s)
+                 for p in parts}
+        premium = _reverting(rng, self.premium_sd, self.premium_half_life_s, n, self.step_s)
+        total = [sum(w[i] for w in walks.values()) + premium[i] for i in range(n)]
+        return {**walks, basket.symbol: total}
+
+
+_LINKED_RULES = (
+    "Who trades: each asset has its own order book, and the same kinds of traders as Sea Salt: "
+    "market "
+    "makers, a random crowd, a few trend followers, and a pack of well-informed traders who know "
+    "each asset's own fair value moments early, but not how the assets are linked.\n\n"
+    "One bankroll carries every asset: your equity counts all your trades, and each asset's "
+    "buying power is that equity less what your other assets tie up.\n\n"
+    "Prices are in ticks of a cent. The round lasts {duration}.\n\n"
+    "Fees: a resting order that is filled earns 0.1 tick a lot; an order that takes from the "
+    "book pays 0.2 tick a lot.\n\n"
+    "Limits: in each asset, at most 100 lots long or short and 20 lots an order, within your "
+    "buying power.\n\n"
+    "Score: your profit after fees over all the assets, with what you hold at the end valued "
+    "at what closing it through each book would bring. It is added to your game balance.")
+
+PAIR = PairKind(
+    name="pair",
+    title="Driftwood & Lanterns",
+    description=("A pair: Lanterns are carved from Driftwood and follow its price, with a gap "
+                 "that wanders and comes back."),
+    assets=(Asset("DRIFT", "Driftwood", 10000), Asset("LANTERN", "Lanterns", 8000)),
+    brief=("Driftwood & Lanterns: two assets that move together.\n\n"
+           "Driftwood: washed up on every beach, calm and always on the move, starting near "
+           "$100.\n\n"
+           "Lanterns: carved from driftwood, starting near $80. A lantern's fair value follows "
+           "Driftwood's, by about four fifths of each move, plus a gap of its own that wanders "
+           "off for a while and then comes back. When Lanterns look cheap or dear next to "
+           "Driftwood, that tends not to last.\n\n" + _LINKED_RULES),
+)
+
+BASKET = BasketKind(
+    name="basket",
+    title="Fruit Crate",
+    description=("A basket: a Fruit Crate holds one Coconut and one Mango, and trades near what "
+                 "its contents are worth, give or take a premium that comes and goes."),
+    assets=(Asset("COCO", "Coconuts", 4000), Asset("MANGO", "Mangoes", 6000),
+            Asset("CRATE", "Fruit Crate", 10000)),
+    brief=("Fruit Crate: a basket and what goes in it.\n\n"
+           "Coconuts and Mangoes: two fruits, each calm and always on the move on its own, "
+           "starting near $40 and $60.\n\n"
+           "Fruit Crate: one coconut and one mango, packed, starting near $100. Its fair value "
+           "is what a coconut and a mango are worth together, plus a premium (or discount) that "
+           "comes and goes and drifts back towards nothing. A crate far from the price of its "
+           "contents tends to come back to it.\n\n" + _LINKED_RULES),
+)
+
+PUBLIC_KINDS: dict[str, MarketKind] = {k.name: k for k in (CALM, NEWS, TRENDING, PAIR, BASKET)}
 
 
 def public_kind(name: str) -> MarketKind:

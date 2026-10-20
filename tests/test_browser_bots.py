@@ -185,3 +185,23 @@ def test_a_bots_errors_and_output_show_in_its_panel(bot_server):
         b.close()
     (row,) = server.http.get(f"/api/games/{code}/rounds/1").json()["results"]
     assert row["score"] == 0 and row["details"]["timeouts"] == 0
+
+
+def test_the_runner_plays_a_turn_with_several_assets():
+    import asyncio
+
+    reports, sent = [], []
+    source = ("from arena_kit import Bot, Quote\n"
+              "class Pairs(Bot):\n"
+              "    def on_turn(self, p):\n"
+              "        return {'LANTERN': Quote(take=2)}\n")
+    runner = browser.start(source, sent.append, reports.append)
+    state = json.loads(_turn())["state"]
+    msg = {"type": "turn", "round": 1, "turn": 1,
+           "state": {"time": 1, "time_left": 10, "balance": 1_000_000,
+                     "assets": {"DRIFT": state, "LANTERN": state}}}
+    asyncio.run(runner.handle(json.dumps(msg)))
+    assert json.loads(sent[-1]) == {"type": "orders", "turn": 1, "quotes": {
+        "LANTERN": {"bid": None, "ask": None, "take": 2, "take_price": None}}}
+    turn = json.loads(reports[-1])
+    assert turn["type"] == "turn" and turn["positions"] == {"DRIFT": 0, "LANTERN": 0}

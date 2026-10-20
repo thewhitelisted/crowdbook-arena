@@ -14,9 +14,9 @@ import numpy as np
 
 import crowdbook_learn
 
-from .bot import Bot, Fill, News, Quote, State, Trade
+from .bot import Bot, Fill, News, Portfolio, Quote, State, Trade, checked_quotes
 from . import money
-from .markets import MarketKind, briefing_of, has_news, headlines, public_kind
+from .markets import MarketKind, briefing_of, has_news, headlines, is_linked, public_kind
 from .money import DEFAULT_BANKROLL
 
 _S = {name: i for i, name in enumerate(crowdbook_learn.STATE_NAMES)}
@@ -36,6 +36,9 @@ class SteppedMarket:
         self.bankroll = float(bankroll)  # tick-lots the seat starts with
         self._news = sorted(news, key=lambda n: n.time)  # headlines, by when they come out
         self._news_given = 0
+        # In a round with several assets: the others' P&L, and what they tie up of the bankroll.
+        self.extra_equity = 0.0
+        self.other_committed = 0.0
 
     def state(self) -> State:
         """The seat's state at the current decision, with what it heard since the last one."""
@@ -98,7 +101,7 @@ class SteppedMarket:
         bid, ask = int(s[_S["bid_price"]]), int(s[_S["ask_price"]])
         at = money.mark(bid, ask, int(s[_S["last_trade"]]), int(s[_S["reference_price"]]))
         eq = money.equity(self.bankroll, float(s[_S["cash"]]), float(s[_S["fees"]]) / 1000,
-                          position, at)
+                          position, at) + self.extra_equity - self.other_committed
 
         taken = "buy" if q.take > 0 else "sell" if q.take < 0 else None
 
@@ -146,6 +149,91 @@ class SteppedMarket:
         return self._pool.session(0)
 
 
+class SteppedPortfolio:
+    """Several markets, one for each asset of a linked kind, stepped together through one
+    bankroll. Their decisions are taken in time order: at each turn the markets due to decide now
+    get the bot's quotes, and the others show what they showed last, as of a moment no later than
+    now, so that no market is seen ahead of another."""
+
+    def __init__(self, scenarios: dict[str, str], seed: int,
+                 bankroll: float = DEFAULT_BANKROLL):
+        self.seed = int(seed)
+        self.bankroll = float(bankroll)
+        self.markets = {sym: SteppedMarket(text, seed, (), bankroll)
+                        for sym, text in scenarios.items()}
+        self.symbols = tuple(self.markets)
+        self._next = {sym: m.state() for sym, m in self.markets.items()}  # each one's next turn
+        self._shown: dict[str, State] = {}
+        self.turns = 0
+        self._cache: tuple[int, Portfolio] | None = None
+
+    @property
+    def done(self) -> bool:
+        return all(m.done for m in self.markets.values())
+
+    def _due(self) -> list[str]:
+        live = [sym for sym, m in self.markets.items() if not m.done]
+        if not live:
+            return []
+        now = min(self._next[sym].time for sym in live)
+        return [sym for sym in live if self._next[sym].time == now]
+
+    def state(self) -> Portfolio:
+        """The portfolio at the current turn: the assets due now as they are, the others as last
+        shown, without the trades and fills already reported."""
+        if self._cache and self._cache[0] == self.turns:
+            return self._cache[1]
+        due = self._due() or list(self.symbols)
+        assets = {}
+        for sym in self.symbols:
+            if sym in due or sym not in self._shown:
+                assets[sym] = self._next[sym]
+            else:
+                old = self._shown[sym]
+                assets[sym] = State(**{**old.__dict__, "trades": [], "fills": [], "news": []})
+        now = max(self._next[sym].time for sym in due)
+        p = Portfolio(time=now, time_left=min(a.time_left for a in assets.values()),
+                      assets=assets, balance=self.bankroll)
+        self._cache = (self.turns, p)
+        return p
+
+    def step(self, quotes: dict[str, Quote] | None) -> None:
+        """Places the due markets' quotes (an asset left out keeps its quotes) and runs on to
+        the next turn."""
+        if self.done:
+            raise RuntimeError("the market has ended")
+        p = self.state()
+        due = self._due()
+        tied = {sym: p.committed(sym) for sym in self.symbols}
+        for sym in due:
+            m = self.markets[sym]
+            m.extra_equity = sum(a.equity - a.balance for o, a in p.assets.items() if o != sym)
+            m.other_committed = sum(v for o, v in tied.items() if o != sym)
+            q = (quotes or {}).get(sym)
+            if q is not None:
+                # What this asset will tie up once its quote is in, for the assets after it.
+                q = m._afford(q.checked())
+                a = p.assets[sym]
+                tied[sym] = money.committed(a.position + q.take, q.bid[1] if q.bid else 0,
+                                            q.ask[1] if q.ask else 0, p.mark(sym))
+            m.step(q)
+            self._next[sym] = m.state()
+        self._shown = dict(p.assets)
+        self.turns += 1
+
+    @property
+    def score(self) -> float:
+        return sum(m.score for m in self.markets.values())
+
+    @property
+    def positions(self) -> dict[str, int]:
+        return {sym: int(m._obs["state"][0][_S["position"]]) for sym, m in self.markets.items()}
+
+    @property
+    def info(self) -> dict[str, Any]:
+        return {"seed": self.seed, "turns": self.turns}
+
+
 @dataclass
 class LocalResult:
     market: str
@@ -154,6 +242,7 @@ class LocalResult:
     turns: int
     position: int
     fees: float
+    positions: dict[str, int] | None = None  # by asset, in a round with several
 
 
 def run_local(bot: Bot, market: str | MarketKind = "calm", seed: int = 1,
@@ -164,6 +253,8 @@ def run_local(bot: Bot, market: str | MarketKind = "calm", seed: int = 1,
     instant, experts, crowd or off, as the host of a round chooses. `bankroll` is the dollars
     the bot starts with, which sets its buying power as in a game."""
     kind = public_kind(market) if isinstance(market, str) else market
+    if is_linked(kind):
+        return _run_linked(bot, kind, seed, duration_s, bankroll)
     m = SteppedMarket(kind.scenario(seed, duration_s), seed,
                       headlines(kind, seed, duration_s, news), bankroll * money.DOLLAR)
     first = m.state()
@@ -182,3 +273,22 @@ def run_local(bot: Bot, market: str | MarketKind = "calm", seed: int = 1,
                          position=state.position, fees=state.fees)
     bot.on_end({"score": result.score, "position": result.position, "turns": result.turns})
     return result
+
+
+def _run_linked(bot: Bot, kind: Any, seed: int, duration_s: int,
+                bankroll: float) -> LocalResult:
+    m = SteppedPortfolio(kind.scenarios(seed, duration_s), seed, bankroll * money.DOLLAR)
+    first = m.state()
+    bot.on_start({"market": kind.name, "seed": seed, "duration_s": duration_s, "mode": "local",
+                  "briefing": briefing_of(kind, seed, duration_s),
+                  "assets": {a.symbol: a.title for a in kind.assets},
+                  "max_position": next(iter(first.assets.values())).max_position,
+                  "max_order_quantity": next(iter(first.assets.values())).max_order_quantity})
+    while not m.done:
+        m.step(checked_quotes(bot.on_turn(m.state()), m.symbols))
+    fees = sum(float(mk._obs["state"][0][_S["fees"]]) / 1000 for mk in m.markets.values())
+    result = LocalResult(market=kind.name, seed=seed, score=m.score, turns=m.turns,
+                         position=sum(m.positions.values()), fees=fees, positions=m.positions)
+    bot.on_end({"score": result.score, "positions": result.positions, "turns": result.turns})
+    return result
+

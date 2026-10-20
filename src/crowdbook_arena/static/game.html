@@ -85,16 +85,17 @@
         <div class="clock"><div id="clock-bar"></div></div>
       </div>
       <div class="stats">
-        <div class="stat"><div class="k">Position (lots)</div><div class="v" id="position">0</div></div>
+        <div class="stat"><div class="k" id="position-label">Position (lots)</div><div class="v" id="position">0</div></div>
         <div class="stat big"><div class="k">P&amp;L this round</div><div class="v" id="pnl">0</div></div>
         <div class="stat"><div class="k">Equity</div><div class="v" id="cash">0</div></div>
         <div class="stat"><div class="k">Fees</div><div class="v" id="fees">0</div></div>
       </div>
       <p class="dim limits" id="limits"></p>
     </div>
+    <div class="row asset-tabs hidden" id="asset-tabs"></div>
     <div class="trade-grid">
       <div class="panel book">
-        <h2>Order book</h2>
+        <h2>Order book<span id="book-asset" style="text-transform:none;letter-spacing:0"></span></h2>
         <table class="ladder"><tbody id="ladder"></tbody></table>
         <p class="dim hint">Click a <span class="pos">bid size</span> to place a bid at that price,
           an <span class="neg">offer size</span> to place an offer; click your own order

@@ -14,7 +14,7 @@ import logging
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
-from .bot import Bot, Fill, News, Quote, State, Trade
+from .bot import Bot, Fill, News, Portfolio, Quote, State, Trade, checked_quotes
 from .tracker import SeatTracker
 
 log = logging.getLogger(__name__)
@@ -32,6 +32,8 @@ def round_start_info(rnd: dict[str, Any] | None) -> dict[str, Any]:
             "duration_s": config.get("duration_s"), "briefing": config.get("briefing", "")}
     if "news" in config:
         info["news"] = config["news"]
+    if "assets" in config:
+        info["assets"] = config["assets"]
     return info
 
 
@@ -60,8 +62,12 @@ class LiveDriver:
         own = [i for i in (*tracker.orders, *tracker.pending) if i < ARENA_IDS]
         self.next_id = max(own, default=0) + 1
         self.started = False
+        # In a round with several assets: what the seat's other assets add to its equity, and
+        # tie up of its bankroll (PortfolioDriver.account).
+        self.account: Callable[[], tuple[float, float]] | None = None
 
-    async def on_message(self, m: dict[str, Any]) -> None:
+    def record(self, m: dict[str, Any]) -> None:
+        """Notes what a gateway message means for the next turn and for orders in flight."""
         kind = m.get("type")
         if kind == "trade":
             self.trades.append(self.t.trades[-1])
@@ -72,6 +78,10 @@ class LiveDriver:
             self.modifying.pop(m["id"], None)
         if kind in ("modified", "rejected"):
             self.modifying.pop(m.get("id"), None)
+
+    async def on_message(self, m: dict[str, Any]) -> None:
+        self.record(m)
+        kind = m.get("type")
         if not self.t.started or self.t.ended is not None:
             return
         if not self.started:
@@ -113,7 +123,11 @@ class LiveDriver:
         and the seat's buying power, its other order on the side being replaced."""
         t = self.t
         room = t.max_position - t.position if side == "buy" else t.max_position + t.position
-        afford = self.t.state().room(side, price)
+        state = t.state()
+        if self.account:
+            extra, others = self.account()
+            state.balance += extra - others  # the bankroll's equity, less what the rest ties up
+        afford = state.room(side, price)
         return max(0, min(room, t.max_order_quantity, afford))
 
     def _new_id(self) -> int:
@@ -163,6 +177,80 @@ class LiveDriver:
                                   "quantity": size})
 
 
+class PortfolioDriver:
+    """Turns a bot's quotes into orders in a live round with several assets: one LiveDriver for
+    each asset's market, and one bot turn for them all, every simulated second and whenever one
+    of its orders fills."""
+
+    def __init__(self, bot: Bot, trackers: dict[str, SeatTracker],
+                 send: Callable[[dict[str, Any]], Any], interval: int = SECOND,
+                 info: dict[str, Any] | None = None):
+        self.bot = bot
+        self.send = send
+        self.interval = interval
+        self.info = info or {}
+        self.drivers = {sym: LiveDriver(bot, t, self._sender(sym), interval)
+                        for sym, t in trackers.items()}
+        for sym, d in self.drivers.items():
+            d.account = (lambda sym=sym: self.account(sym))
+        self.next_turn: int | None = None
+        self.started = False
+
+    def _sender(self, sym: str):
+        async def send(msg: dict[str, Any]) -> None:
+            await self.send({**msg, "asset": sym})
+        return send
+
+    def account(self, asset: str) -> tuple[float, float]:
+        extra = others = 0.0
+        for sym, d in self.drivers.items():
+            if sym != asset:
+                state = d.t.state()
+                extra += state.equity - state.balance
+                others += d.t.committed()
+        return extra, others
+
+    @property
+    def time(self) -> int:
+        return min(d.t.time for d in self.drivers.values())
+
+    async def on_message(self, sym: str, m: dict[str, Any]) -> None:
+        driver = self.drivers.get(sym)
+        if driver is None:
+            return
+        driver.record(m)
+        trackers = [d.t for d in self.drivers.values()]
+        if not all(t.started for t in trackers) or any(t.ended is not None for t in trackers):
+            return
+        if not self.started:
+            self.started = True
+            first = trackers[0]
+            self.bot.on_start({**self.info, "mode": "live", "max_position": first.max_position,
+                               "max_order_quantity": first.max_order_quantity,
+                               "duration_ns": first.duration})
+        now = self.time
+        if m.get("type") == "filled" or self.next_turn is None or now >= self.next_turn:
+            self.next_turn = (now // self.interval + 1) * self.interval
+            await self.turn()
+
+    async def turn(self) -> None:
+        assets = {}
+        for sym, d in self.drivers.items():
+            assets[sym] = d.t.state(d.trades, d.fills)
+            d.trades, d.fills = [], []
+        first = next(iter(assets.values()))
+        portfolio = Portfolio(time=self.time, time_left=min(a.time_left for a in assets.values()),
+                              assets=assets, balance=first.balance)
+        try:
+            quotes = checked_quotes(self.bot.on_turn(portfolio), tuple(self.drivers))
+        except Exception:
+            log.exception("the bot's on_turn raised or gave a bad answer; its orders are left "
+                          "as they are")
+            return
+        for sym, q in (quotes or {}).items():
+            await self.drivers[sym].place(q)
+
+
 class Session:
     """A bot's side of its connection to an arena: what it does with each message from the
     server, whatever carries the messages (a WebSocket here, a browser tab's in the browser).
@@ -177,6 +265,7 @@ class Session:
         self.me: dict[str, Any] | None = None
         self.tracker: SeatTracker | None = None
         self.driver: LiveDriver | None = None
+        self.portfolio: PortfolioDriver | None = None
         self.live_round: int | None = None
         self.known: dict[int, dict[str, Any]] = {}  # the rounds the server has described, by id
 
@@ -199,6 +288,31 @@ class Session:
             if self.tracker and isinstance(request, dict) and "id" in request:
                 # The server refused it, so the gateway never saw it.
                 self.tracker.pending.pop(request["id"], None)
+            elif self.portfolio and isinstance(request, dict) and "id" in request:
+                d = self.portfolio.drivers.get(request.get("asset"))
+                if d is not None:
+                    d.t.pending.pop(request["id"], None)
+        elif kind == "live_snapshot" and msg.get("seated") and "assets" in msg["state"]:
+            if self.portfolio is None or self.live_round != msg["round"]:
+                trackers = {}
+                for sym, snap in msg["state"]["assets"].items():
+                    trackers[sym] = SeatTracker()
+                    trackers[sym].load(snap)
+                self.portfolio = PortfolioDriver(
+                    bot, trackers, send, info=round_start_info(self.known.get(msg["round"])))
+                self.live_round = msg["round"]
+            else:  # the same round again: carry on as we were
+                for sym, snap in msg["state"]["assets"].items():
+                    d = self.portfolio.drivers[sym]
+                    d.t.load(snap)
+                    d.cancelling.clear()
+                    d.modifying.clear()
+        elif (kind == "live" and "asset" in msg and self.portfolio
+              and msg["round"] == self.live_round):
+            driver = self.portfolio.drivers.get(msg["asset"])
+            if driver is not None:
+                driver.t.apply(msg["m"])
+                await self.portfolio.on_message(msg["asset"], msg["m"])
         elif kind == "live_snapshot" and msg.get("seated"):
             if (self.driver is not None and self.tracker is not None
                     and self.live_round == msg["round"]):
@@ -219,22 +333,27 @@ class Session:
             await self.driver.on_message(msg["m"])
         elif kind == "turn":
             # A lockstep round: answer every turn with this turn's quote.
+            linked = "assets" in msg["state"]
             if msg["round"] != self.live_round:
                 self.live_round = msg["round"]
                 s = msg["state"]
+                first = next(iter(s["assets"].values())) if linked else s
                 try:
                     bot.on_start({**round_start_info(self.known.get(msg["round"])),
                                   "mode": "lockstep", "round": msg["round"],
-                                  "max_position": s["max_position"],
-                                  "max_order_quantity": s["max_order_quantity"]})
+                                  "max_position": first["max_position"],
+                                  "max_order_quantity": first["max_order_quantity"]})
                 except Exception:
                     log.exception("the bot's on_start raised")
-            try:
-                quote = bot.on_turn(State.from_json(msg["state"]))
-            except Exception:
-                log.exception("the bot's on_turn raised; it answers nothing this turn")
-                quote = None
-            answer = quote.to_json() if quote is not None else _keep(msg["state"])
+            if linked:
+                answer = _portfolio_answer(bot, msg["state"])
+            else:
+                try:
+                    quote = bot.on_turn(State.from_json(msg["state"]))
+                except Exception:
+                    log.exception("the bot's on_turn raised; it answers nothing this turn")
+                    quote = None
+                answer = quote.to_json() if quote is not None else _keep(msg["state"])
             await send({"type": "orders", "turn": msg["turn"], **answer})
         elif kind == "round_ended":
             me = self.me
@@ -244,7 +363,7 @@ class Session:
                 bot.on_end(result)
             self.done.append(result)
             self.known.pop(msg["round"]["id"], None)
-            self.tracker = self.driver = None
+            self.tracker = self.driver = self.portfolio = None
             self.live_round = None
             if self.rounds is not None and len(self.done) >= self.rounds:
                 return True
@@ -271,6 +390,19 @@ async def play(bot: Bot, server: str, token: str, *, rounds: int | None = None,
             if await session.handle(msg):
                 break
         return session.done
+
+
+def _portfolio_answer(bot: Bot, state: dict[str, Any]) -> dict[str, Any]:
+    """A bot's answer to a turn with several assets; nothing (every quote kept) if it raises or
+    answers wrongly."""
+    try:
+        quotes = checked_quotes(bot.on_turn(Portfolio.from_json(state)),
+                                tuple(state["assets"]))
+    except Exception:
+        log.exception("the bot's on_turn raised or gave a bad answer; it answers nothing this "
+                      "turn")
+        quotes = None
+    return {"quotes": {sym: q.to_json() for sym, q in (quotes or {}).items()}}
 
 
 def _keep(state: dict[str, Any]) -> dict[str, Any]:
