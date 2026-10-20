@@ -437,7 +437,11 @@ function renderLadder(s) {
   $("ladder").innerHTML = rows.join("");
 }
 
-$("ladder").addEventListener("click", (e) => {
+// The ladder and the order list are redrawn with every update of the book, several times a
+// second, so a click (a press and a release, a fraction of a second apart) would often start on one
+// drawing and end on the next, and never fire. They act on the press instead, as trading ladders do.
+$("ladder").addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
   const td = e.target.closest("td");
   const tr = e.target.closest("tr");
   if (!td || !tr || !seat || !seated) return;
@@ -459,7 +463,8 @@ function renderOrders(s) {
     `<td class="num">${o.leaves}</td><td><button data-id="${o.id}">Cancel</button></td></tr>`).join("");
 }
 
-$("orders").addEventListener("click", (e) => {
+$("orders").addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
   const id = e.target.dataset && e.target.dataset.id;
   if (id) send({ type: "cancel", id: parseInt(id, 10) });
 });
