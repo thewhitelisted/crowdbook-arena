@@ -85,6 +85,13 @@ def test_two_tabs_play_a_live_round(server):
             return {line, green};
         }""")
         assert colours["line"] > 20 and colours["green"] > 5, colours
+        # The hover crosshair shows the time and price under the pointer.
+        box = b.locator("#chart").bounding_box()
+        b.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + box["height"] * 0.5)
+        b.wait_for_selector("#chart-tip:not(.hidden)")
+        assert ":" in b.text_content("#chart-tip")
+        b.mouse.move(0, 0)
+        b.wait_for_selector("#chart-tip.hidden", state="attached")
         b.screenshot(path=str(SHOTS / "trading.png"))
 
         # Someone who joins mid-round watches the market without a seat.
@@ -185,5 +192,46 @@ def test_news_in_the_browser(server):
         a.wait_for_function("document.getElementById('news').textContent.includes('Good news')",
                             timeout=10000)
         a.screenshot(path=str(SHOTS / "news.png"))
+        browser.close()
+    assert errors == []
+
+
+def test_the_chart_fills_its_width_early_in_a_long_round(server):
+    errors = []
+    game = server.new_game("alice")
+    code = game["code"]
+    with playwright.sync_playwright() as p:
+        browser = p.chromium.launch()
+        a = browser.new_context(viewport={"width": 1280, "height": 1000}).new_page()
+        a.on("pageerror", lambda e: errors.append(str(e)))
+        a.goto(server.url)
+        a.evaluate(f"sessionStorage.setItem('arena:{code}', '{game['token']}')")
+        a.goto(f"{server.url}/g/{code}")
+        a.wait_for_selector("#host-controls:not(.hidden)")
+        a.fill("#duration", "3600")
+        a.fill("#speed", "4")
+        a.click("#start-round")
+        a.wait_for_selector("#trading:not(.hidden)")
+        a.wait_for_timeout(2500)  # about ten seconds of a round an hour long
+        span = a.evaluate("""() => {
+            const c = document.getElementById('chart');
+            const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+            let lo = c.width, hi = 0;
+            for (let i = 0; i < d.length; i += 4) {
+                if (d[i + 3] > 200 && d[i + 2] > 200 && d[i] < 120) {
+                    const x = (i / 4) % c.width;
+                    lo = Math.min(lo, x); hi = Math.max(hi, x);
+                }
+            }
+            return (hi - lo) / c.width;
+        }""")
+        assert span > 0.75, span
+        # A range button narrows the window, and All brings the whole round back.
+        a.click("#chart-ranges button[data-range='30s']")
+        a.click("#chart-ranges button[data-range='All']")
+        assert "primary" in a.get_attribute("#chart-ranges button[data-range='All']", "class")
+        a.screenshot(path=str(SHOTS / "chart.png"))
+        r = server.http.get("/static/game.js")
+        assert r.headers["cache-control"] == "no-cache"
         browser.close()
     assert errors == []

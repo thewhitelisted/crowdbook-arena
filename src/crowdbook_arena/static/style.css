@@ -51,4 +51,6 @@ th { color: var(--dim); font-weight: 500; text-align: left; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #444; margin-right: 6px; }
 .dot.on { background: var(--bid); }
 .badge { font-size: 11px; color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+.ranges button { padding: 2px 8px; font-size: 12px; }
+.chart-tip { position: absolute; top: 0; padding: 2px 6px; border-radius: 4px; background: #0c0f13; border: 1px solid var(--line); font: 12px ui-monospace, monospace; pointer-events: none; white-space: pre; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }

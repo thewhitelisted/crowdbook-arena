@@ -315,7 +315,7 @@ function fromSnapshot(s) {
     orders: new Map((s.orders || []).map((o) => [o.id, o])), bids: s.bids || [], asks: s.asks || [],
     last: s.last_trade, trades: (s.trades || []).slice(-60).reverse(), ended: s.ended,
     reference: s.reference_price || 0, initialCash: s.initial_cash || 0,
-    series: new Map((s.series || []).map(([sec, p]) => [sec, p])), myFills: (s.my_fills || []).slice(),
+    mids: new Map((s.mids || []).map(([q, p]) => [q, p])), myFills: (s.my_fills || []).slice(),
     news: (s.news || []).slice(),
   };
 }
@@ -350,15 +350,16 @@ function apply(s, m) {
       s.last = m.price;
       s.trades.unshift({ time: m.time, price: m.price, quantity: m.quantity, aggressor: m.aggressor });
       if (s.trades.length > 60) s.trades.pop();
-      s.series.set(Math.floor(m.time / SEC), m.price);
       break;
     case "top":
       s.bids = mergeTop(s.bids, m.bid);
       s.asks = mergeTop(s.asks, m.ask);
+      noteMid(s);
       break;
     case "depth":
       s.bids = m.bids.map((l) => [l.price, l.quantity]);
       s.asks = m.asks.map((l) => [l.price, l.quantity]);
+      noteMid(s);
       break;
     case "end":
       s.ended = m;
@@ -424,8 +425,56 @@ function render() {
   if (!$("price").value && s.bids.length) $("price").value = s.bids[0][0];
 }
 
-// The price chart: the last trade in each simulated second over the round, with the seat's own
-// fills marked. Drawn on a canvas, at the screen's pixel density.
+// The price chart: the middle of the market every quarter second of simulated time, drawn as a
+// smooth curve that never overshoots (monotone cubic), over the round so far or a recent window,
+// with the seat's own fills and the headlines marked. A crosshair follows the pointer.
+const MID_STEP = SEC / 4;
+const RANGES = { "30s": 30, "1m": 60, "5m": 300, All: null };
+let chartRange = "All";
+let chartHover = null;  // the pointer's x on the chart, in CSS pixels
+
+function noteMid(s) {
+  if (s.bids.length && s.asks.length) s.mids.set(Math.floor(s.time / MID_STEP), (s.bids[0][0] + s.asks[0][0]) / 2);
+}
+
+$("chart-ranges").innerHTML = Object.keys(RANGES).map((r) =>
+  `<button data-range="${r}" class="${r === chartRange ? "primary" : ""}">${r}</button>`).join("");
+$("chart-ranges").addEventListener("click", (e) => {
+  const r = e.target.dataset && e.target.dataset.range;
+  if (!r) return;
+  chartRange = r;
+  for (const b of $("chart-ranges").querySelectorAll("button")) b.classList.toggle("primary", b.dataset.range === r);
+  scheduleRender();
+});
+$("chart").addEventListener("pointermove", (e) => {
+  chartHover = e.clientX - $("chart").getBoundingClientRect().left;
+  scheduleRender();
+});
+$("chart").addEventListener("pointerleave", () => { chartHover = null; scheduleRender(); });
+
+// Fritsch–Carlson tangents: a cubic through each pair of points that stays between them.
+function monotoneTangents(xs, ys) {
+  const n = xs.length, d = [], m = new Array(n).fill(0);
+  for (let i = 0; i < n - 1; i++) d.push((ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i] || 1));
+  if (n > 1) { m[0] = d[0]; m[n - 1] = d[n - 2]; }
+  for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
+    const a = m[i] / d[i], b = m[i + 1] / d[i], h = a * a + b * b;
+    if (h > 9) { const t = 3 / Math.sqrt(h); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i]; }
+  }
+  return m;
+}
+
+function tracePath(ctx, xs, ys) {
+  const m = monotoneTangents(xs, ys);
+  ctx.moveTo(xs[0], ys[0]);
+  for (let i = 0; i < xs.length - 1; i++) {
+    const dx = (xs[i + 1] - xs[i]) / 3;
+    ctx.bezierCurveTo(xs[i] + dx, ys[i] + m[i] * dx, xs[i + 1] - dx, ys[i + 1] - m[i + 1] * dx, xs[i + 1], ys[i + 1]);
+  }
+}
+
 function renderChart(s) {
   const canvas = $("chart");
   const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -440,58 +489,109 @@ function renderChart(s) {
   ctx.clearRect(0, 0, w, h);
   const css = getComputedStyle(document.documentElement);
   const color = (name) => css.getPropertyValue(name).trim();
-  const points = [...s.series.entries()].sort((a, b) => a[0] - b[0]);
-  const prices = points.map((p) => p[1]).concat(s.myFills.map((f) => f[2]));
-  if (!prices.length) {
+  const tip = $("chart-tip");
+  // The window: from the start, or the chosen span before now, to now.
+  const now = Math.max(s.time / SEC, 1);
+  const span = RANGES[chartRange];
+  const t0 = span ? Math.max(0, now - span) : 0;
+  const pts = [...s.mids.entries()].sort((a, b) => a[0] - b[0])
+    .map(([q, p]) => [(q * MID_STEP) / SEC, p]);
+  // The line starts at the last point before the window and runs on to now at the latest mid.
+  let first = 0;
+  while (first < pts.length - 1 && pts[first + 1][0] <= t0) first++;
+  const shown = pts.slice(first).map(([t, p]) => [Math.max(t, t0), p]);
+  if (shown.length) shown.push([now, shown[shown.length - 1][1]]);
+  const fills = s.myFills.filter((f) => f[0] / SEC >= t0);
+  const news = s.news.filter((n) => n.time / SEC >= t0);
+  if (!shown.length) {
     ctx.fillStyle = color("--dim");
     ctx.font = "12px system-ui";
-    ctx.fillText("No trades yet", 8, h / 2);
+    ctx.fillText("Waiting for the market…", 8, h / 2);
+    tip.classList.add("hidden");
     return;
   }
-  const left = 46, right = 8, top = 8, bottom = 18;
-  const lo = Math.min(...prices) - 1, hi = Math.max(...prices) + 1;
-  const span = Math.max(1, s.duration / SEC);
-  const x = (sec) => left + ((w - left - right) * sec) / span;
+  const prices = shown.map((p) => p[1]).concat(fills.map((f) => f[2]));
+  let lo = Math.min(...prices), hi = Math.max(...prices);
+  const pad = Math.max(1, (hi - lo) * 0.15);
+  lo -= pad; hi += pad;
+  const left = 8, right = 56, top = 10, bottom = 20;
+  const x = (t) => left + ((w - left - right) * (t - t0)) / Math.max(now - t0, 1e-9);
   const y = (p) => top + ((h - top - bottom) * (hi - p)) / (hi - lo);
-  // Axes: the price range and the clock.
-  ctx.strokeStyle = color("--line");
-  ctx.fillStyle = color("--dim");
+  // Grid and labels: whole ticks on the right, times along the bottom.
   ctx.font = "11px ui-monospace, monospace";
   ctx.lineWidth = 1;
   const step = Math.max(1, Math.ceil((hi - lo) / 4));
   for (let p = Math.ceil(lo / step) * step; p <= hi; p += step) {
-    ctx.beginPath(); ctx.moveTo(left, y(p) + 0.5); ctx.lineTo(w - right, y(p) + 0.5); ctx.stroke();
-    ctx.fillText(String(p), 2, y(p) + 4);
+    ctx.strokeStyle = color("--line");
+    ctx.beginPath(); ctx.moveTo(left, Math.round(y(p)) + 0.5); ctx.lineTo(w - right, Math.round(y(p)) + 0.5); ctx.stroke();
+    ctx.fillStyle = color("--dim");
+    ctx.fillText(String(p), w - right + 6, y(p) + 4);
   }
-  ctx.fillText("0:00", left, h - 4);
-  const end = clock(span);
-  ctx.fillText(end, w - right - ctx.measureText(end).width, h - 4);
-  // The price, as steps from one second's last trade to the next.
-  ctx.strokeStyle = color("--accent");
-  ctx.lineWidth = 1.5;
+  ctx.fillStyle = color("--dim");
+  ctx.fillText(clock(t0), left, h - 5);
+  const nowLabel = clock(now);
+  ctx.fillText(nowLabel, w - right - ctx.measureText(nowLabel).width, h - 5);
+  const xs = shown.map((p) => x(p[0])), ys = shown.map((p) => y(p[1]));
+  const accent = color("--accent");
+  // A soft fill under the line, fading downwards.
+  const grad = ctx.createLinearGradient(0, top, 0, h - bottom);
+  grad.addColorStop(0, accent + "40");
+  grad.addColorStop(1, accent + "00");
   ctx.beginPath();
-  points.forEach(([sec, p], i) => {
-    if (i === 0) ctx.moveTo(x(sec), y(p));
-    else { ctx.lineTo(x(sec), y(points[i - 1][1])); ctx.lineTo(x(sec), y(p)); }
-  });
-  if (points.length) ctx.lineTo(x(Math.min(span, s.time / SEC)), y(points[points.length - 1][1]));
+  tracePath(ctx, xs, ys);
+  ctx.lineTo(xs[xs.length - 1], h - bottom);
+  ctx.lineTo(xs[0], h - bottom);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.beginPath();
+  tracePath(ctx, xs, ys);
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
   ctx.stroke();
   // Headlines, as dashed lines at the moment they came out.
   ctx.setLineDash([3, 3]);
   ctx.lineWidth = 1;
-  for (const n of s.news) {
+  for (const n of news) {
     ctx.strokeStyle = color(n.change > 0 ? "--bid" : n.change < 0 ? "--ask" : "--dim");
-    ctx.beginPath(); ctx.moveTo(x(n.time / SEC) + 0.5, top); ctx.lineTo(x(n.time / SEC) + 0.5, h - bottom); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(Math.round(x(n.time / SEC)) + 0.5, top); ctx.lineTo(Math.round(x(n.time / SEC)) + 0.5, h - bottom); ctx.stroke();
   }
   ctx.setLineDash([]);
   // The seat's own fills: a triangle up for each buy, down for each sell.
-  for (const [t, side, p] of s.myFills) {
+  for (const [t, side, p] of fills) {
     const cx = x(t / SEC), cy = y(p), r = 5;
     ctx.fillStyle = color(side === "buy" ? "--bid" : "--ask");
     ctx.beginPath();
     if (side === "buy") { ctx.moveTo(cx, cy - r); ctx.lineTo(cx - r, cy + r); ctx.lineTo(cx + r, cy + r); }
     else { ctx.moveTo(cx, cy + r); ctx.lineTo(cx - r, cy - r); ctx.lineTo(cx + r, cy - r); }
     ctx.fill();
+  }
+  // The price now: a dot at the line's end, and its value on the axis.
+  const lastP = shown[shown.length - 1][1], ex = xs[xs.length - 1], ey = ys[ys.length - 1];
+  ctx.fillStyle = accent;
+  ctx.beginPath(); ctx.arc(ex, ey, 4, 0, 2 * Math.PI); ctx.fill();
+  const label = Number.isInteger(lastP) ? String(lastP) : lastP.toFixed(1);
+  ctx.fillRect(w - right + 2, ey - 9, right - 4, 18);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(label, w - right + 6, ey + 4);
+  // The crosshair, at the point nearest the pointer.
+  if (chartHover !== null && chartHover >= left && chartHover <= w - right) {
+    let i = 0;
+    for (let j = 1; j < xs.length; j++) if (Math.abs(xs[j] - chartHover) < Math.abs(xs[i] - chartHover)) i = j;
+    ctx.strokeStyle = color("--dim");
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath(); ctx.moveTo(Math.round(xs[i]) + 0.5, top); ctx.lineTo(Math.round(xs[i]) + 0.5, h - bottom); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(left, Math.round(ys[i]) + 0.5); ctx.lineTo(w - right, Math.round(ys[i]) + 0.5); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = accent;
+    ctx.beginPath(); ctx.arc(xs[i], ys[i], 4, 0, 2 * Math.PI); ctx.fill();
+    const p = shown[i][1];
+    tip.textContent = `${clock(shown[i][0])}  ${Number.isInteger(p) ? p : p.toFixed(1)}`;
+    tip.classList.remove("hidden");
+    tip.style.left = `${Math.min(Math.max(xs[i] - tip.offsetWidth / 2, 0), w - tip.offsetWidth)}px`;
+  } else {
+    tip.classList.add("hidden");
   }
 }
 

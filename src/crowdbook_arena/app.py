@@ -194,4 +194,27 @@ def create_app(settings: Settings | None = None) -> Starlette:
         lifespan=lifespan,
     )
     app.state.arena = arena
-    return app
+    return Revalidate(app)
+
+
+class Revalidate:
+    """Pages and their scripts are checked with the server on every load (cheap: an unchanged
+    file is a 304), so that a new version takes effect without a hard refresh."""
+
+    def __init__(self, app: Starlette):
+        self.app = app
+        self.state = app.state
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        if scope["type"] != "http" or not (path == "/" or path.startswith(("/g/", "/static/"))):
+            return await self.app(scope, receive, send)
+
+        async def send_revalidating(message):
+            if message["type"] == "http.response.start":
+                headers = [(k, v) for k, v in message.get("headers", [])
+                           if k.lower() != b"cache-control"]
+                message = {**message, "headers": [*headers, (b"cache-control", b"no-cache")]}
+            await send(message)
+
+        await self.app(scope, receive, send_revalidating)
