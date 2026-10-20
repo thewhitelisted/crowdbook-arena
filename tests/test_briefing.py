@@ -3,6 +3,7 @@ bots in every kind of round and offline; and recorded public markets to study.""
 
 import asyncio
 import csv
+import json
 
 import pytest
 
@@ -76,6 +77,8 @@ def test_screens_and_bots_get_the_briefing(server, mode):
                                     game["token"])
         assert r.status_code == 201, r.text
         started = await recv_until(ws, lambda m: m["type"] == "round_started")
+        if mode == "live":
+            await ws.send(json.dumps({"type": "ready"}))
         await recv_until(ws, lambda m: m["type"] == "round_ended", timeout=40)
         await ws.close()
         await asyncio.wait_for(task, 40)

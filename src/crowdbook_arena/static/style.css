@@ -8,7 +8,7 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 header { display: flex; gap: 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 header h1 { font-size: 18px; margin: 0; }
 header .code { font: 600 16px ui-monospace, monospace; letter-spacing: 2px; background: var(--panel); padding: 2px 8px; border-radius: 4px; }
-main { padding: 16px; display: grid; gap: 16px; }
+main { padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
 .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin: 0 0 10px; }
 .hidden { display: none !important; }
@@ -54,7 +54,11 @@ th { color: var(--dim); font-weight: 500; text-align: left; }
 .ranges button { padding: 2px 8px; font-size: 12px; }
 .chart-tip { position: absolute; top: 0; padding: 2px 6px; border-radius: 4px; background: #0c0f13; border: 1px solid var(--line); font: 12px ui-monospace, monospace; pointer-events: none; white-space: pre; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
-.briefing { white-space: pre-line; font-size: 13px; line-height: 1.45; margin-top: 6px; max-width: 72em; max-height: 8em; overflow-y: auto; }
+.briefing { white-space: pre-line; overflow-wrap: anywhere; font-size: 13px; line-height: 1.45; margin-top: 6px; max-width: 72em; box-sizing: border-box; }
+.briefing.compact { max-height: 14em; overflow-y: auto; padding-right: 6px; }
+.briefing-summary { cursor: pointer; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); }
+.briefing-summary span { text-transform: none; letter-spacing: 0; }
+select, input { max-width: 100%; }
 #bot-code { width: 100%; box-sizing: border-box; font: 13px ui-monospace, monospace; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px; tab-size: 4; }
 .bot-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; margin-top: 8px; }
 .bot-output { max-height: 180px; white-space: pre-wrap; font-size: 12px; }

@@ -34,6 +34,9 @@ def test_live_round_end_to_end(server):
                                         {"kind": "live", "market": "calm", "duration_s": 30,
                                          "speed": 15}, host_token)
             assert r.status_code == 201, r.text
+            # The market waits for bob, the one human connected, to read the briefing.
+            await recv_until(ws, lambda m: m["type"] == "game" and m["game"]["ready_check"])
+            await ws.send(json.dumps({"type": "ready"}))
             await recv_until(ws, lambda m: m["type"] == "live" and m["m"]["type"] == "start")
             await ws.send(json.dumps({"type": "new", "side": "buy", "order_type": "market",
                                       "quantity": 3}))

@@ -65,12 +65,12 @@ def briefing_of(kind: MarketKind, seed: int, duration_s: int, news: str | None =
 
 
 _NEWS_LINES = {
-    "instant": "Headlines: each jump in the true value is told to you the moment it happens.",
-    "experts": "Headlines: each jump in the true value is told to you about 2 seconds after it "
-               "happens, as the experts hear it.",
-    "crowd": "Headlines: each jump in the true value is told to you about 30 seconds after it "
-             "happens, with the crowd, after the experts have traded on it.",
-    "off": "Headlines: none this round. Watch the trades for jumps in the true value.",
+    "instant": "Headlines: each jump in the fair value is told to you the moment it happens.",
+    "experts": "Headlines: each jump in the fair value is told to you about 2 seconds after it "
+               "happens, as the well-informed hear it.",
+    "crowd": "Headlines: each jump in the fair value is told to you about 30 seconds after it "
+             "happens, with the crowd, after the well-informed have traded on it.",
+    "off": "Headlines: none this round. Watch the trades for jumps in the fair value.",
 }
 
 
@@ -254,14 +254,16 @@ def _minutes(duration_s: int) -> str:
     return f"{m} minute{'s' * (m != 1)}" + (f" {s} seconds" if s else "")
 
 
-def _brief(value: str, crowd: str) -> str:
-    """A public kind's briefing: its true value and crowd, and the rules every public kind
-    shares (set in _template and _SEAT)."""
+def _brief(asset: str, flavour: str, behaviour: str, crowd: str) -> str:
+    """A public kind's briefing, as an asset sheet: what the asset is, how its price behaves and
+    who trades it, in plain words, then the rules every public kind shares (set in _template and
+    _SEAT). Nothing in it depends on the round's seed."""
     return (
-        "The round lasts {duration}. One stock trades in a single order book, priced in ticks "
-        "(1 tick = 1 cent) and starting near 10,000.\n\n"
-        f"True value: {value}\n\n"
-        f"Who trades: {crowd}\n\n"
+        f"{asset}: {flavour}\n\n"
+        f"How it trades: {behaviour}\n\n"
+        f"Who trades it: {crowd}\n\n"
+        "Prices are in ticks of a cent, and it starts near $100 a unit. The round lasts "
+        "{duration}.\n\n"
         "Fees: a resting order that is filled earns 0.1 tick a lot; an order that takes from the "
         "book pays 0.2 tick a lot.\n\n"
         "Limits: at most 100 lots long or short and 20 lots an order, and no more than your "
@@ -271,23 +273,21 @@ def _brief(value: str, crowd: str) -> str:
     )
 
 
-_PEOPLE = ("two market makers quoting both sides (one fast, 5 lots every quarter second; one "
-           "slower, 10 lots every second); {noise} noise traders who buy and sell at random; "
-           "{trend} trend followers who buy rises and sell falls; two experts who see the true "
-           "value {lag} late and trade when the price is 2 ticks or more away from it; and 30 "
-           "followers who see it 30 seconds late, roughly.")
+_CROWD_TEXT = ("market makers quoting both sides; a crowd of small traders who buy and sell at "
+               "random; {trend}; a few well-informed traders who learn the fair value before "
+               "anyone else; and a slower crowd that catches up later.")
 
 
 CALM = TemplateKind(
     name="calm",
-    title="Calm",
-    description=(
-        "A few trades a second around a true value that wanders slowly. Two market makers, noise "
-        "traders, trend followers, and traders who see the true value early or late."
-    ),
+    title="Sea Salt",
+    description="A calm asset: its fair value drifts slowly, with no news and no sudden moves.",
     template=_template('\n[fundamental]\nvolatility = 0.5\nstep = "250ms"\n'),
-    brief=_brief("a random walk, about half a tick a second; no jumps and no headlines.",
-                 _PEOPLE.format(noise=60, trend=5, lag="1 second")),
+    brief=_brief("Sea Salt", "raked from the shallows and traded every day by everyone on the "
+                 "island.",
+                 "a calm asset. Its fair value drifts slowly, without sudden moves, and there is "
+                 "no news.",
+                 _CROWD_TEXT.format(trend="a few trend followers")),
 )
 
 @dataclass(frozen=True)
@@ -343,34 +343,33 @@ class NewsKind:
 
 NEWS = NewsKind(
     name="news",
-    title="News",
-    description=(
-        "The true value jumps by about eight ticks without warning, about once a minute. Experts "
-        "see the news a couple of seconds late, the crowd half a minute later. Players get a "
-        "headline too, when the host chooses."
-    ),
+    title="Pearls",
+    description=("Mostly quiet, but its fair value jumps when news breaks. The well-informed hear "
+                 "first, the crowd later; players get headlines too, when the host chooses."),
     template=_template('\n[fundamental]\npath = [{path}]\n', expert_lag="2s"),
     fallback=_template(
         '\n[fundamental]\nvolatility = 0.3\nstep = "250ms"\njump_rate = 0.0167\njump_size = 8.0\n',
         expert_lag="2s"),
-    brief=_brief("a random walk of about a third of a tick a second, which jumps without "
-                 "warning about once a minute, by about 8 ticks up or down.",
-                 _PEOPLE.format(noise=60, trend=5, lag="2 seconds")),
+    brief=_brief("Pearls", "scarce and prized; what they are worth turns on word from the "
+                 "divers.",
+                 "mostly quiet, but its fair value jumps when news breaks, now and then, up or "
+                 "down and by a good margin. The well-informed trade on the news first; the "
+                 "crowd follows.",
+                 _CROWD_TEXT.format(trend="a few trend followers")),
 )
 
 TRENDING = TemplateKind(
     name="trending",
-    title="Trending",
-    description=(
-        "A livelier true value and a pack of trend followers who chase every move, so prices "
-        "overshoot and come back."
-    ),
+    title="Coral",
+    description=("Volatile and trend-prone: a livelier fair value and a pack of trend followers, "
+                 "so moves overshoot and come back."),
     template=_template('\n[fundamental]\nvolatility = 1.0\nstep = "250ms"\n', trend=15,
                        market_rate=0.08),
-    brief=_brief("a random walk of about a tick a second; no jumps and no headlines.",
-                 _PEOPLE.format(noise=60, trend=15, lag="1 second")
-                 + " The noise traders send market orders more often than in Calm, and the "
-                   "trend followers push prices past the true value before they come back."),
+    brief=_brief("Coral", "the island's favourite building stone, its price swinging with "
+                 "the mood of the builders.",
+                 "volatile and trend-prone. Its fair value moves faster than the others', and "
+                 "trend followers chase every move, so prices overshoot and come back. No news.",
+                 _CROWD_TEXT.format(trend="a pack of trend followers who chase every move")),
 )
 
 PUBLIC_KINDS: dict[str, MarketKind] = {k.name: k for k in (CALM, NEWS, TRENDING)}

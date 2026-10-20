@@ -115,6 +115,9 @@ def test_a_pasted_bot_plays_live_and_lockstep_rounds(bot_server):
                         {"kind": "live", "market": "calm", "duration_s": 20, "speed": 4},
                         game["token"])
         assert r.status_code == 201, r.text
+        # Alice reads the briefing; her bot, which gets it in on_start, is not asked.
+        page.wait_for_selector("#ready-gate:not(.hidden)")
+        page.click("#ready-button")
         page.wait_for_function("document.getElementById('bot-quotes').textContent.includes('@')",
                                timeout=30000)
         _phase(page, "round ended")

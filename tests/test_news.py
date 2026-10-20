@@ -113,7 +113,7 @@ def test_lockstep_news_matches_offline(newsy):
     local = run_local(offline, Newsy(), seed=7, duration_s=30, news="instant")
     assert trader.heard == offline.heard and len(offline.heard) == 2
     # A kind without a briefing of its own is briefed with its description, and the news.
-    brief = ("calm, with headlines\n\nHeadlines: each jump in the true value is told to you "
+    brief = ("calm, with headlines\n\nHeadlines: each jump in the fair value is told to you "
              "the moment")
     assert trader.started["briefing"].startswith(brief)
     assert trader.started["briefing"] == offline.started["briefing"]
@@ -136,6 +136,7 @@ def test_live_news_reaches_screens_and_bots(newsy):
                                     {"kind": "live", "market": "newsy", "duration_s": 12,
                                      "speed": 4, "news": "experts"}, game["token"])
         assert r.status_code == 201, r.text
+        await ws.send(json.dumps({"type": "ready"}))
         first = await recv_until(ws, lambda m: m["type"] == "news")
         second = await recv_until(ws, lambda m: m["type"] == "news")
         await recv_until(ws, lambda m: m["type"] == "round_ended")
@@ -191,6 +192,7 @@ def test_the_news_market_end_to_end(server):
                                     {"kind": "live", "market": "news", "duration_s": 60,
                                      "seed": 3, "speed": 15}, game["token"])
         assert r.status_code == 201, r.text
+        await ws.send(json.dumps({"type": "ready"}))
         first = await recv_until(ws, lambda m: m["type"] == "news", timeout=30)
         await asyncio.to_thread(server.post, f"/api/games/{code}/rounds/stop", {},
                                 game["token"])
