@@ -16,6 +16,7 @@ import argparse
 import importlib.util
 import json
 import os
+import ssl
 import statistics
 import sys
 import urllib.error
@@ -53,6 +54,21 @@ def _home() -> Path:
     return Path(os.environ.get("ARENA_KIT_HOME", Path.home() / ".crowdbook-arena"))
 
 
+def _no_https(server: str) -> SystemExit:
+    """The error for an https:// address whose server answers in plain HTTP, as a game run on a
+    laptop or another machine of one's own does."""
+    plain = "http://" + server.split("://", 1)[1]
+    return SystemExit(
+        f"{server} does not answer over HTTPS. A game run on a laptop or your own machine is "
+        f"served over plain HTTP: use --server {plain}. Only a hosted server with a certificate "
+        f"(docs/hosting.md) uses https://.")
+
+
+def _unreachable(server: str, reason: object) -> SystemExit:
+    return SystemExit(f"cannot reach {server}: {reason}. Check the address and port, and that "
+                      f"the server is running and reachable from this machine.")
+
+
 def _post(url: str, data: dict) -> dict:
     req = urllib.request.Request(url, json.dumps(data).encode(),
                                  {"Content-Type": "application/json"})
@@ -65,6 +81,11 @@ def _post(url: str, data: dict) -> dict:
         except ValueError:
             message = str(e)
         raise SystemExit(f"the server said: {message}") from None
+    except urllib.error.URLError as e:
+        server = url.split("/api/", 1)[0]
+        if isinstance(e.reason, ssl.SSLError):
+            raise _no_https(server) from None
+        raise _unreachable(server, e.reason) from None
 
 
 def join_token(server: str, code: str, name: str) -> str:
@@ -148,6 +169,14 @@ def main(argv: list[str] | None = None) -> None:
                           f"{len(r['results'])}, score {mine['score']:+.1f}")
         except KeyboardInterrupt:
             pass
+        except ssl.SSLError:
+            raise _no_https(args.server.rstrip("/")) from None
+        except ConnectionRefusedError as e:
+            raise _unreachable(args.server.rstrip("/"), e) from None
+        except ConnectionError as e:  # the server turned the bot away, and said why
+            raise SystemExit(f"the server said: {e}") from None
+        except OSError as e:
+            raise _unreachable(args.server.rstrip("/"), e) from None
 
 
 if __name__ == "__main__":
