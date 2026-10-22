@@ -152,3 +152,25 @@ def test_ws_url():
     assert ws_url("http://localhost:8000") == "ws://localhost:8000/ws"
     assert ws_url("https://arena.example.com/") == "wss://arena.example.com/ws"
     assert ws_url("localhost:8000") == "ws://localhost:8000/ws"
+
+
+def test_joining_a_plain_http_server_over_https_says_what_to_do(server, tmp_path, monkeypatch):
+    from arena_kit.cli import main as kit_main
+
+    monkeypatch.setenv("ARENA_KIT_HOME", str(tmp_path))
+    code = server.new_game("host")["code"]
+    https = server.url.replace("http://", "https://")
+    bot = str(Path(__file__).parents[1] / "kit" / "examples" / "starter_bot.py")
+    for extra in ([], ["--token", "anything"]):  # joining, and connecting with a token
+        with pytest.raises(SystemExit) as e:
+            kit_main(["join", bot, "--server", https, "--code", code, "--name", "b", *extra])
+        assert f"use --server {server.url}" in str(e.value)
+    # A server that is not there at all.
+    with pytest.raises(SystemExit) as e:
+        kit_main(["join", bot, "--server", "http://127.0.0.1:9", "--code", code, "--name", "b"])
+    assert "cannot reach http://127.0.0.1:9" in str(e.value)
+    # A token the server does not know: what the server said, not a network error.
+    with pytest.raises(SystemExit) as e:
+        kit_main(["join", bot, "--server", server.url, "--code", code, "--name", "b",
+                  "--token", "not-a-token"])
+    assert str(e.value).startswith("the server said:")

@@ -116,7 +116,9 @@ seed=1)`. Only the public kinds can be recorded.
 arena-kit join my_bot.py --server http://host:8000 --code ABCDEF --name my-bot
 ```
 
-The bot joins the game under that name and plays every round the host starts. The kit keeps the
+Use `http://` for a game served from a laptop or your own machine, and `https://` only for a hosted
+server with a certificate; the kit says so if you mix them up. The bot joins the game under that
+name and plays every round the host starts. The kit keeps the
 bot's player token in `~/.crowdbook-arena/tokens.json`, so running the command again takes the
 same seat.
 
