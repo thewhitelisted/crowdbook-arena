@@ -24,10 +24,8 @@ the network, and the server never runs anyone's code.
 > - a crowd tuned so that neither careless quoting nor simply following the flow is a sure thing
 >   (`tests/test_yardstick.py`), and a careful starter bot that profits modestly.
 >
-> Paused on 20 Oct 2026, with options (an item 4) next when work resumes. At that point: the
-> engine pin is `crowdbook-engine==0.14.1` (both `pyproject.toml` files), and the suite has 106
-> tests (`uv sync --group browser && uv run pytest`), green on Linux, on macOS on Apple silicon,
-> and in Docker.
+> Paused on 22 Oct 2026, until about next month. [docs/handoff.md](docs/handoff.md) has the state,
+> the invariants, what is decided and what comes next.
 
 ## Run it
 
