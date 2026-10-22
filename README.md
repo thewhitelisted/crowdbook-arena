@@ -31,6 +31,10 @@ the network, and the server never runs anyone's code.
 
 ## Run it
 
+Running a session for a group (a club, a class, a recruiting event)? The
+[host kit](docs/host-kit.md) has a 60–90 minute run sheet, scoring, debrief questions and an
+optional bot segment.
+
 Python 3.12 or later and [uv](https://docs.astral.sh/uv/). On Linux (x86-64 or arm64) or macOS on
 Apple silicon, everything installs from ready-built wheels, with nothing to compile.
 
